@@ -232,7 +232,8 @@
       padding: 0 16px;
       font-size: 14px;
       cursor: pointer;
-      background: linear-gradient(135deg, #b91c1c, #f97316);
+      /* gradiente solo rosso, niente arancione */
+      background: linear-gradient(135deg, #991b1b, #ef4444);
       color: #ffffff;
       display: flex;
       align-items: center;
@@ -596,6 +597,37 @@
       messagesEl.scrollTop = messagesEl.scrollHeight;
     }
 
+    // decide se è un buon momento per mostrare la bubble dei modelli
+    function shouldShowModelBubbleForLastReply(replyText, lead) {
+      const t = (replyText || "").toLowerCase();
+
+      // se il lead è già completato, niente bubble
+      if (lead && lead.status === "completed") {
+        return false;
+      }
+
+      // frasi chiave che indicano raccolta dati (nome / numero / appuntamento)
+      const bookingKeywords = [
+        "numero di cellulare",
+        "numero del tuo cellulare",
+        "il tuo cellulare",
+        "posso avere il tuo numero",
+        "per fissare l'appuntamento",
+        "per procedere con la prenotazione",
+        "per completare la richiesta di appuntamento",
+        "per completare la prenotazione",
+        "come ti chiami",
+        "il tuo nome",
+        "come ti posso chiamare",
+      ];
+
+      if (bookingKeywords.some((k) => t.includes(k))) {
+        return false;
+      }
+
+      return true;
+    }
+
     async function startSession() {
       try {
         sendBtn.disabled = true;
@@ -688,7 +720,13 @@
 
         // 4) bubble con i modelli: la mostriamo una sola volta
         //    quando almeno abbiamo il nome del lead
-        if (lastLead && lastLead.z_name && !modelButtonsShown) {
+        //    e NON siamo nel mezzo della raccolta dati (nome / cellulare / prenotazione)
+        if (
+          lastLead &&
+          lastLead.z_name &&
+          !modelButtonsShown &&
+          shouldShowModelBubbleForLastReply(data.reply, lastLead)
+        ) {
           appendModelButtonsBubble();
         }
       } catch (err) {
