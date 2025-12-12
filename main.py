@@ -436,7 +436,6 @@ def push_lead_to_airtable(lead: Lead, db: Session) -> None:
     - Cellulare    -> lead.z_cell
     - Email        -> lead.z_email (per ora vuoto nella nostra logica)
     - Provincia    -> ricavata da resolve_city(z_city) se possibile
-    - CAP          -> vuoto (non lo raccogliamo in chat)
     - Origine Lead -> "Chatbot"
     """
     if not AIRTABLE_API_KEY:
@@ -464,7 +463,7 @@ def push_lead_to_airtable(lead: Lead, db: Session) -> None:
                         "Cellulare": lead.z_cell or "",
                         "Email": lead.z_email or "",
                         "Provincia": provincia,
-                        "CAP": "",
+                        "Città": lead.z_city,
                         "Origine Lead": "Chatbot",
                     }
                 }
