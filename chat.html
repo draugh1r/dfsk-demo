@@ -160,48 +160,6 @@
       box-shadow: 0 12px 28px rgba(15, 23, 42, 0.6);
     }
 
-    /* Bubble dei quick replies per i modelli */
-    .quick-replies-bubble {
-      background: #0f172a;
-      border-bottom-left-radius: 6px;
-      border: 1px solid rgba(248, 113, 113, 0.5);
-      box-shadow: 0 10px 24px rgba(15, 23, 42, 0.45);
-    }
-
-    .quick-replies-title {
-      font-size: 13px;
-      margin-bottom: 8px;
-      opacity: 0.9;
-    }
-
-    .quick-replies {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 6px;
-    }
-
-    .quick-reply-btn {
-      border: 1px solid rgba(248, 250, 252, 0.35);
-      border-radius: 999px;
-      padding: 6px 10px;
-      font-size: 12px;
-      background: rgba(15, 23, 42, 0.7);
-      color: #f9fafb;
-      cursor: pointer;
-      transition: background 0.15s ease, border-color 0.15s ease, transform 0.12s ease;
-      backdrop-filter: blur(8px);
-    }
-
-    .quick-reply-btn:hover {
-      background: #f97373;
-      border-color: #fecaca;
-      transform: translateY(-1px);
-    }
-
-    .quick-reply-btn:active {
-      transform: translateY(0);
-    }
-
     .chat-input-area {
       border-top: 1px solid #e5e7eb;
       padding: 8px;
@@ -379,8 +337,6 @@
 
     let sessionId = null;
     let lastLead = null;
-    let pendingModelImage = null; // usato quando si cliccano i bottoni
-    let modelButtonsShown = false; // la bubble con i modelli viene mostrata una volta
 
     const messagesEl = document.getElementById("messages");
     const inputEl = document.getElementById("messageInput");
@@ -551,90 +507,11 @@
       messagesEl.scrollTop = messagesEl.scrollHeight;
     }
 
-    // bubble con i pulsanti dei modelli
-    function appendModelButtonsBubble() {
-      if (modelButtonsShown) return;
-      modelButtonsShown = true;
-
-      const row = document.createElement("div");
-      row.className = "message-row assistant";
-
-      const meta = document.createElement("div");
-      meta.className = "message-meta";
-      meta.textContent = "Beatrice";
-
-      const bubble = document.createElement("div");
-      bubble.className = "message-bubble quick-replies-bubble";
-
-      const title = document.createElement("div");
-      title.className = "quick-replies-title";
-      title.textContent = "Se vuoi, posso mostrarti le immagini dei nostri modelli:";
-
-      const replies = document.createElement("div");
-      replies.className = "quick-replies";
-
-      const models = ["Glory 500", "Glory 600", "Glory F5", "Glory E5"];
-
-      models.forEach((modelName) => {
-        const btn = document.createElement("button");
-        btn.className = "quick-reply-btn";
-        btn.textContent = modelName;
-        btn.addEventListener("click", () => {
-          handleModelButtonClick(modelName);
-        });
-        replies.appendChild(btn);
-      });
-
-      bubble.appendChild(title);
-      bubble.appendChild(replies);
-
-      const wrapper = document.createElement("div");
-      wrapper.appendChild(meta);
-      wrapper.appendChild(bubble);
-
-      row.appendChild(wrapper);
-      messagesEl.appendChild(row);
-      messagesEl.scrollTop = messagesEl.scrollHeight;
-    }
-
-    // decide se è un buon momento per mostrare la bubble dei modelli
-    function shouldShowModelBubbleForLastReply(replyText, lead) {
-      const t = (replyText || "").toLowerCase();
-
-      // se il lead è già completato, niente bubble
-      if (lead && lead.status === "completed") {
-        return false;
-      }
-
-      // frasi chiave che indicano raccolta dati (nome / numero / appuntamento)
-      const bookingKeywords = [
-        "numero di cellulare",
-        "numero del tuo cellulare",
-        "il tuo cellulare",
-        "posso avere il tuo numero",
-        "per fissare l'appuntamento",
-        "per procedere con la prenotazione",
-        "per completare la richiesta di appuntamento",
-        "per completare la prenotazione",
-        "come ti chiami",
-        "il tuo nome",
-        "come ti posso chiamare",
-      ];
-
-      if (bookingKeywords.some((k) => t.includes(k))) {
-        return false;
-      }
-
-      return true;
-    }
-
     async function startSession() {
       try {
         sendBtn.disabled = true;
         sessionId = null;
         lastLead = null;
-        pendingModelImage = null;
-        modelButtonsShown = false;
 
         const res = await fetch(`${API_BASE}/session`, {
           method: "POST",
@@ -695,15 +572,8 @@
         const data = await res.json();
         console.log("LLM raw response:", data);
 
-        // 1) immagini modello
-        let modelFromLLM = data.show_model_images || null;
-
-        // se il modello arriva da un bottone, ha priorità
-        if (pendingModelImage) {
-          modelFromLLM = pendingModelImage;
-          pendingModelImage = null;
-        }
-
+        // 1) immagini modello solo se lo chiede il backend
+        const modelFromLLM = data.show_model_images || null;
         if (modelFromLLM) {
           appendModelImageBubble(modelFromLLM);
         }
@@ -717,34 +587,12 @@
         } else {
           lastLead = null;
         }
-
-        // 4) bubble con i modelli: la mostriamo una sola volta
-        //    quando almeno abbiamo il nome del lead
-        //    e NON siamo nel mezzo della raccolta dati (nome / cellulare / prenotazione)
-        if (
-          lastLead &&
-          lastLead.z_name &&
-          !modelButtonsShown &&
-          shouldShowModelBubbleForLastReply(data.reply, lastLead)
-        ) {
-          appendModelButtonsBubble();
-        }
       } catch (err) {
         console.error(err);
         showError("Errore nell'invio del messaggio.");
       } finally {
         sendBtn.disabled = false;
       }
-    }
-
-    function handleModelButtonClick(modelName) {
-      if (!sessionId) return;
-
-      pendingModelImage = modelName;
-
-      const userText = `Vorrei maggiori informazioni su ${modelName}`;
-      appendMessage("user", userText);
-      sendMessageToBackend(userText);
     }
 
     // Event listeners
