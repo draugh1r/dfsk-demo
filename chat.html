@@ -190,6 +190,7 @@
       padding: 0 16px;
       font-size: 14px;
       cursor: pointer;
+      /* gradiente solo rosso */
       background: linear-gradient(135deg, #991b1b, #ef4444);
       color: #ffffff;
       display: flex;
@@ -287,6 +288,16 @@
     .image-modal-close:hover {
       background: #e5e7eb;
       transform: translateY(-1px);
+    }
+
+    /* link dentro alle bubble */
+    .message-bubble a {
+      color: #f97373;
+      text-decoration: underline;
+    }
+
+    .message-bubble a:hover {
+      text-decoration: none;
     }
   </style>
 </head>
@@ -398,6 +409,29 @@
       }
     });
 
+    // --- linkify sicuro (escapa HTML e aggiunge <a> per gli URL) ---
+    function escapeHtml(str) {
+      return str.replace(/[&<>"']/g, (c) => {
+        const map = {
+          '&': '&amp;',
+          '<': '&lt;',
+          '>': '&gt;',
+          '"': '&quot;',
+          "'": '&#39;',
+        };
+        return map[c] || c;
+      });
+    }
+
+    function linkify(text) {
+      const urlRegex = /(https?:\/\/[^\s]+)/g;
+      const escaped = escapeHtml(text);
+      return escaped.replace(
+        urlRegex,
+        '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>'
+      );
+    }
+
     // helper: crea una singola bubble
     function createBubble(role, text, showMetaLabel = true) {
       const row = document.createElement("div");
@@ -409,7 +443,13 @@
 
       const bubble = document.createElement("div");
       bubble.className = "message-bubble";
-      bubble.textContent = text;
+
+      if (role === "assistant") {
+        // qui transformiamo http/https in link cliccabili
+        bubble.innerHTML = linkify(text);
+      } else {
+        bubble.textContent = text;
+      }
 
       const wrapper = document.createElement("div");
       wrapper.appendChild(meta);
@@ -432,7 +472,7 @@
         return;
       }
 
-      // logica standard (split solo sui doppi a capo, per messaggi lunghi generici)
+      // logica standard
       let parts = text
         .split(/\n{2,}/)
         .map((p) => p.trim())
