@@ -1,0 +1,9 @@
+# file di env
+.env
+
+# virtualenv
+venv/
+
+# roba di Python
+__pycache__/
+*.pyc

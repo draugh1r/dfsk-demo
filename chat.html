@@ -1,0 +1,729 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8" />
+  <title>Chat DFSK Beatrice</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    body {
+      background: radial-gradient(circle at top, #fca5a5 0, #f3f4f6 40%, #e5e7eb 100%);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      padding: 16px;
+    }
+
+    .chat-container {
+      background: #ffffff;
+      width: 100%;
+      max-width: 480px;
+      height: 80vh;
+      max-height: 720px;
+      border-radius: 20px;
+      box-shadow: 0 18px 40px rgba(15, 23, 42, 0.18);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      border: 1px solid rgba(148, 163, 184, 0.3);
+    }
+
+    .chat-header {
+      padding: 12px 16px;
+      border-bottom: 1px solid rgba(148, 163, 184, 0.5);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      background: linear-gradient(135deg, #111827, #b91c1c);
+      color: #f9fafb;
+    }
+
+    .avatar {
+      width: 36px;
+      height: 36px;
+      border-radius: 999px;
+      background: rgba(248, 250, 252, 0.1);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      border: 1px solid rgba(248, 250, 252, 0.3);
+    }
+
+    .chat-header-text {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .chat-header-title {
+      font-weight: 600;
+      font-size: 14px;
+      letter-spacing: 0.03em;
+    }
+
+    .chat-header-subtitle {
+      font-size: 11px;
+      opacity: 0.85;
+    }
+
+    .chat-messages {
+      flex: 1;
+      padding: 12px;
+      overflow-y: auto;
+      background: #f9fafb;
+    }
+
+    .message-row {
+      display: flex;
+      margin-bottom: 8px;
+    }
+
+    .message-row.assistant {
+      justify-content: flex-start;
+    }
+
+    .message-row.user {
+      justify-content: flex-end;
+    }
+
+    .message-bubble {
+      max-width: 80%;
+      padding: 10px 12px;
+      border-radius: 14px;
+      font-size: 14px;
+      line-height: 1.4;
+      white-space: pre-wrap;
+      display: inline-block;
+      position: relative;
+    }
+
+    .assistant .message-bubble {
+      background: #111827;
+      color: #f9fafb;
+      border-bottom-left-radius: 6px;
+      box-shadow: 0 10px 24px rgba(15, 23, 42, 0.45);
+      border: 1px solid rgba(248, 113, 113, 0.5);
+    }
+
+    .user .message-bubble {
+      background: #e5e7eb;
+      color: #111827;
+      border-bottom-right-radius: 6px;
+    }
+
+    .message-meta {
+      font-size: 11px;
+      color: #9ca3af;
+      margin-bottom: 2px;
+    }
+
+    .assistant .message-meta {
+      text-align: left;
+      margin-left: 4px;
+    }
+
+    .user .message-meta {
+      text-align: right;
+      margin-right: 4px;
+    }
+
+    .message-bubble img {
+      max-width: 100%;
+      border-radius: 12px;
+      display: block;
+    }
+
+    /* wrapper per due foto affiancate */
+    .car-images {
+      display: flex;
+      gap: 8px;
+    }
+
+    .car-images img {
+      width: 48%;
+      height: auto;
+      object-fit: cover;
+      border-radius: 12px;
+      cursor: pointer;
+      transition: transform 0.18s ease, box-shadow 0.18s ease;
+    }
+
+    .car-images img:hover {
+      transform: translateY(-1px) scale(1.02);
+      box-shadow: 0 12px 28px rgba(15, 23, 42, 0.6);
+    }
+
+    /* Bubble dei quick replies per i modelli */
+    .quick-replies-bubble {
+      background: #0f172a;
+      border-bottom-left-radius: 6px;
+      border: 1px solid rgba(248, 113, 113, 0.5);
+      box-shadow: 0 10px 24px rgba(15, 23, 42, 0.45);
+    }
+
+    .quick-replies-title {
+      font-size: 13px;
+      margin-bottom: 8px;
+      opacity: 0.9;
+    }
+
+    .quick-replies {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .quick-reply-btn {
+      border: 1px solid rgba(248, 250, 252, 0.35);
+      border-radius: 999px;
+      padding: 6px 10px;
+      font-size: 12px;
+      background: rgba(15, 23, 42, 0.7);
+      color: #f9fafb;
+      cursor: pointer;
+      transition: background 0.15s ease, border-color 0.15s ease, transform 0.12s ease;
+      backdrop-filter: blur(8px);
+    }
+
+    .quick-reply-btn:hover {
+      background: #f97373;
+      border-color: #fecaca;
+      transform: translateY(-1px);
+    }
+
+    .quick-reply-btn:active {
+      transform: translateY(0);
+    }
+
+    .chat-input-area {
+      border-top: 1px solid #e5e7eb;
+      padding: 8px;
+      background: #ffffff;
+      display: flex;
+      gap: 8px;
+    }
+
+    .chat-input {
+      flex: 1;
+      border: 1px solid #d1d5db;
+      border-radius: 999px;
+      padding: 8px 12px;
+      font-size: 14px;
+      outline: none;
+      background: #f9fafb;
+    }
+
+    .chat-input:focus {
+      border-color: #dc2626;
+      box-shadow: 0 0 0 1px rgba(220, 38, 38, 0.25);
+      background: #ffffff;
+    }
+
+    .chat-send-btn {
+      border: none;
+      border-radius: 999px;
+      padding: 0 16px;
+      font-size: 14px;
+      cursor: pointer;
+      background: linear-gradient(135deg, #b91c1c, #f97316);
+      color: #ffffff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: transform 0.12s ease, box-shadow 0.15s ease, opacity 0.15s ease;
+      box-shadow: 0 10px 18px rgba(248, 113, 113, 0.5);
+    }
+
+    .chat-send-btn:disabled {
+      opacity: 0.6;
+      cursor: default;
+      box-shadow: none;
+      transform: none;
+    }
+
+    .chat-send-btn:not(:disabled):hover {
+      transform: translateY(-1px);
+      box-shadow: 0 16px 30px rgba(248, 113, 113, 0.7);
+    }
+
+    .chat-footer {
+      font-size: 11px;
+      text-align: center;
+      padding: 4px 8px 8px;
+      color: #9ca3af;
+    }
+
+    .chat-footer a {
+      color: #b91c1c;
+      text-decoration: none;
+      font-weight: 500;
+    }
+
+    .chat-footer a:hover {
+      text-decoration: underline;
+    }
+
+    .error-banner {
+      background: #fee2e2;
+      color: #b91c1c;
+      padding: 6px 10px;
+      font-size: 12px;
+      text-align: center;
+    }
+
+    /* Modal immagine grande */
+    .image-modal {
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.75);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 50;
+    }
+
+    .image-modal.open {
+      display: flex;
+    }
+
+    .image-modal-content {
+      position: relative;
+      max-width: 90vw;
+      max-height: 90vh;
+    }
+
+    .image-modal-content img {
+      width: 100%;
+      height: auto;
+      max-height: 90vh;
+      border-radius: 18px;
+      box-shadow: 0 20px 45px rgba(0, 0, 0, 0.7);
+    }
+
+    .image-modal-close {
+      position: absolute;
+      top: -14px;
+      right: -14px;
+      width: 32px;
+      height: 32px;
+      border-radius: 999px;
+      border: none;
+      background: #f9fafb;
+      color: #111827;
+      cursor: pointer;
+      font-size: 18px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 8px 20px rgba(15, 23, 42, 0.5);
+      transition: background 0.15s ease, transform 0.12s ease;
+    }
+
+    .image-modal-close:hover {
+      background: #e5e7eb;
+      transform: translateY(-1px);
+    }
+  </style>
+</head>
+<body>
+  <div class="chat-container">
+    <div id="errorBanner" class="error-banner" style="display: none;"></div>
+
+    <div class="chat-header">
+      <div class="avatar">B</div>
+      <div class="chat-header-text">
+        <div class="chat-header-title">Beatrice · DFSK</div>
+        <div class="chat-header-subtitle">Assistente per fissare appuntamenti</div>
+      </div>
+    </div>
+
+    <div id="messages" class="chat-messages"></div>
+
+    <div class="chat-input-area">
+      <input
+        id="messageInput"
+        type="text"
+        class="chat-input"
+        placeholder="Scrivi un messaggio..."
+        autocomplete="off"
+      />
+      <button id="sendBtn" class="chat-send-btn">Invia</button>
+    </div>
+
+    <div class="chat-footer">
+      DFSK AUTO ·
+      <a href="https://dfskcar.it" target="_blank" rel="noopener noreferrer">
+        dfskcar.it
+      </a>
+    </div>
+  </div>
+
+  <!-- Modal per ingrandire le immagini -->
+  <div id="imageModal" class="image-modal">
+    <div class="image-modal-content">
+      <button id="imageModalClose" class="image-modal-close">&times;</button>
+      <img id="imageModalImg" src="" alt="" />
+    </div>
+  </div>
+
+  <script>
+    const API_BASE = window.location.origin;
+
+    let sessionId = null;
+    let lastLead = null;
+    let pendingModelImage = null; // usato quando si cliccano i bottoni
+    let modelButtonsShown = false; // la bubble con i modelli viene mostrata una volta
+
+    const messagesEl = document.getElementById("messages");
+    const inputEl = document.getElementById("messageInput");
+    const sendBtn = document.getElementById("sendBtn");
+    const errorBanner = document.getElementById("errorBanner");
+
+    const imageModalEl = document.getElementById("imageModal");
+    const imageModalImg = document.getElementById("imageModalImg");
+    const imageModalCloseBtn = document.getElementById("imageModalClose");
+
+    // immagini: fronte + interni
+    const MODEL_IMAGES = {
+      "Glory 500": {
+        front: "/static/cars/glory_500_fronte.png",
+        interior: "/static/cars/glory_500_interno.jpg",
+      },
+      "Glory 600": {
+        front: "/static/cars/glory_600_fronte.png",
+        interior: "/static/cars/glory_600_interno.jpg",
+      },
+      "Glory F5": {
+        front: "/static/cars/glory_F5_fronte.jpg",
+        interior: "/static/cars/glory_F5_interno.jpg",
+      },
+      "Glory E5": {
+        front: "/static/cars/glory_E5_fronte.png",
+        interior: "/static/cars/glory_E5_interno.jpg",
+      },
+    };
+
+    function showError(message) {
+      errorBanner.textContent = message;
+      errorBanner.style.display = "block";
+      setTimeout(() => {
+        errorBanner.style.display = "none";
+      }, 5000);
+    }
+
+    function openImageModal(src, alt) {
+      imageModalImg.src = src;
+      imageModalImg.alt = alt || "";
+      imageModalEl.classList.add("open");
+    }
+
+    function closeImageModal() {
+      imageModalEl.classList.remove("open");
+      imageModalImg.src = "";
+      imageModalImg.alt = "";
+    }
+
+    imageModalCloseBtn.addEventListener("click", closeImageModal);
+    imageModalEl.addEventListener("click", (e) => {
+      if (e.target === imageModalEl) {
+        closeImageModal();
+      }
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        closeImageModal();
+      }
+    });
+
+    function appendMessage(role, text) {
+      let parts = text
+        .split(/\n{2,}/)
+        .map((p) => p.trim())
+        .filter((p) => p.length > 0);
+
+      if (parts.length === 0) {
+        parts = [text];
+      }
+
+      if (role === "assistant" && parts.length === 1 && text.length > 220) {
+        const sentences = text.split(/(?<=[.!?])\s+/);
+        const chunks = [];
+        let current = "";
+
+        for (const s of sentences) {
+          const candidate = (current + " " + s).trim();
+          if (candidate.length > 180 && current !== "") {
+            chunks.push(current.trim());
+            current = s;
+          } else {
+            current = candidate;
+          }
+        }
+        if (current) {
+          chunks.push(current.trim());
+        }
+        if (chunks.length > 0) {
+          parts = chunks;
+        }
+      }
+
+      if (parts.length > 3) {
+        const firstTwo = parts.slice(0, 2);
+        const rest = parts.slice(2).join(" ");
+        parts = [...firstTwo, rest];
+      }
+
+      parts.forEach((part, index) => {
+        const row = document.createElement("div");
+        row.className = "message-row " + (role === "assistant" ? "assistant" : "user");
+
+        const meta = document.createElement("div");
+        meta.className = "message-meta";
+        meta.textContent = index === 0 ? (role === "assistant" ? "Beatrice" : "Tu") : "";
+
+        const bubble = document.createElement("div");
+        bubble.className = "message-bubble";
+        bubble.textContent = part;
+
+        const wrapper = document.createElement("div");
+        wrapper.appendChild(meta);
+        wrapper.appendChild(bubble);
+
+        row.appendChild(wrapper);
+        messagesEl.appendChild(row);
+      });
+
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+
+    // bubble con DUE foto affiancate, cliccabili
+    function appendModelImageBubble(modelName) {
+      const config = MODEL_IMAGES[modelName];
+      if (!config) return;
+
+      const row = document.createElement("div");
+      row.className = "message-row assistant";
+
+      const meta = document.createElement("div");
+      meta.className = "message-meta";
+      meta.textContent = "Beatrice";
+
+      const bubble = document.createElement("div");
+      bubble.className = "message-bubble";
+
+      const wrapperImgs = document.createElement("div");
+      wrapperImgs.className = "car-images";
+
+      const imgFront = document.createElement("img");
+      imgFront.src = config.front;
+      imgFront.alt = modelName + " vista esterna";
+      imgFront.addEventListener("click", () => {
+        openImageModal(config.front, imgFront.alt);
+      });
+
+      const imgInterior = document.createElement("img");
+      imgInterior.src = config.interior;
+      imgInterior.alt = modelName + " interni";
+      imgInterior.addEventListener("click", () => {
+        openImageModal(config.interior, imgInterior.alt);
+      });
+
+      wrapperImgs.appendChild(imgFront);
+      wrapperImgs.appendChild(imgInterior);
+
+      bubble.appendChild(wrapperImgs);
+
+      const wrapper = document.createElement("div");
+      wrapper.appendChild(meta);
+      wrapper.appendChild(bubble);
+
+      row.appendChild(wrapper);
+      messagesEl.appendChild(row);
+
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+
+    // bubble con i pulsanti dei modelli
+    function appendModelButtonsBubble() {
+      if (modelButtonsShown) return;
+      modelButtonsShown = true;
+
+      const row = document.createElement("div");
+      row.className = "message-row assistant";
+
+      const meta = document.createElement("div");
+      meta.className = "message-meta";
+      meta.textContent = "Beatrice";
+
+      const bubble = document.createElement("div");
+      bubble.className = "message-bubble quick-replies-bubble";
+
+      const title = document.createElement("div");
+      title.className = "quick-replies-title";
+      title.textContent = "Se vuoi, posso mostrarti le immagini dei nostri modelli:";
+
+      const replies = document.createElement("div");
+      replies.className = "quick-replies";
+
+      const models = ["Glory 500", "Glory 600", "Glory F5", "Glory E5"];
+
+      models.forEach((modelName) => {
+        const btn = document.createElement("button");
+        btn.className = "quick-reply-btn";
+        btn.textContent = modelName;
+        btn.addEventListener("click", () => {
+          handleModelButtonClick(modelName);
+        });
+        replies.appendChild(btn);
+      });
+
+      bubble.appendChild(title);
+      bubble.appendChild(replies);
+
+      const wrapper = document.createElement("div");
+      wrapper.appendChild(meta);
+      wrapper.appendChild(bubble);
+
+      row.appendChild(wrapper);
+      messagesEl.appendChild(row);
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+
+    async function startSession() {
+      try {
+        sendBtn.disabled = true;
+        sessionId = null;
+        lastLead = null;
+        pendingModelImage = null;
+        modelButtonsShown = false;
+
+        const res = await fetch(`${API_BASE}/session`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: "{}",
+        });
+
+        if (!res.ok) {
+          throw new Error(`Errore sessione: ${res.status}`);
+        }
+
+        const data = await res.json();
+        sessionId = data.session_id;
+        if (data.first_message) {
+          appendMessage("assistant", data.first_message);
+        }
+      } catch (err) {
+        console.error(err);
+        showError("Impossibile iniziare la sessione con Beatrice.");
+      } finally {
+        sendBtn.disabled = false;
+      }
+    }
+
+    async function sendMessage() {
+      const text = inputEl.value.trim();
+      if (!text || !sessionId) return;
+
+      appendMessage("user", text);
+      inputEl.value = "";
+      inputEl.focus();
+
+      await sendMessageToBackend(text);
+    }
+
+    async function sendMessageToBackend(text) {
+      if (!sessionId) return;
+      sendBtn.disabled = true;
+
+      try {
+        const res = await fetch(`${API_BASE}/chat`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            session_id: sessionId,
+            message: text,
+          }),
+        });
+
+        if (!res.ok) {
+          throw new Error(`Errore chat: ${res.status}`);
+        }
+
+        const data = await res.json();
+        console.log("LLM raw response:", data);
+
+        // 1) immagini modello
+        let modelFromLLM = data.show_model_images || null;
+
+        // se il modello arriva da un bottone, ha priorità
+        if (pendingModelImage) {
+          modelFromLLM = pendingModelImage;
+          pendingModelImage = null;
+        }
+
+        if (modelFromLLM) {
+          appendModelImageBubble(modelFromLLM);
+        }
+
+        // 2) testo dell'assistente
+        appendMessage("assistant", data.reply || "Ok.");
+
+        // 3) stato lead
+        if (data.lead) {
+          lastLead = data.lead;
+        } else {
+          lastLead = null;
+        }
+
+        // 4) bubble con i modelli: la mostriamo una sola volta
+        //    quando almeno abbiamo il nome del lead
+        if (lastLead && lastLead.z_name && !modelButtonsShown) {
+          appendModelButtonsBubble();
+        }
+      } catch (err) {
+        console.error(err);
+        showError("Errore nell'invio del messaggio.");
+      } finally {
+        sendBtn.disabled = false;
+      }
+    }
+
+    function handleModelButtonClick(modelName) {
+      if (!sessionId) return;
+
+      pendingModelImage = modelName;
+
+      const userText = `Vorrei maggiori informazioni su ${modelName}`;
+      appendMessage("user", userText);
+      sendMessageToBackend(userText);
+    }
+
+    // Event listeners
+    sendBtn.addEventListener("click", () => {
+      sendMessage();
+    });
+
+    inputEl.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
+      }
+    });
+
+    document.addEventListener("DOMContentLoaded", () => {
+      startSession();
+    });
+  </script>
+</body>
+</html>
