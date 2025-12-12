@@ -41,6 +41,13 @@ COMUNI_API_TOKEN = os.getenv("COMUNI_API_TOKEN", "").strip()
 # Cache semplice in memoria per i comuni risolti
 CITY_CACHE: Dict[str, Dict[str, str]] = {}
 
+# ---------- Airtable Config ----------
+
+AIRTABLE_BASE_URL = os.getenv("AIRTABLE_BASE_URL", "https://api.airtable.com/v0")
+AIRTABLE_BASE_ID = os.getenv("AIRTABLE_BASE_ID", "app3SpIL2LfWaDGt0")
+AIRTABLE_TABLE_NAME = os.getenv("AIRTABLE_TABLE_NAME", "Lead")
+AIRTABLE_API_KEY = os.getenv("AIRTABLE_API_KEY", "")
+
 
 # ---------- DB models ----------
 
@@ -416,6 +423,70 @@ def format_dealers_for_reply(city_info: Dict[str, str], dealers: List[Dealer]) -
         "Se vuoi, posso aiutarti a fissare un appuntamento nella sede che preferisci tra queste."
     )
     return "\n".join(lines)
+
+### lead su airtable ###
+
+def push_lead_to_airtable(lead: Lead, db: Session) -> None:
+    """
+    Invia il lead a Airtable quando lo stato passa a 'completed'.
+
+    Mappa i campi così:
+    - Stato Lead   -> "Da contattare"
+    - Nome         -> lead.z_name
+    - Cellulare    -> lead.z_cell
+    - Email        -> lead.z_email (per ora vuoto nella nostra logica)
+    - Provincia    -> ricavata da resolve_city(z_city) se possibile
+    - CAP          -> vuoto (non lo raccogliamo in chat)
+    - Origine Lead -> "Chatbot"
+    """
+    if not AIRTABLE_API_KEY:
+        print("[AIRTABLE] API key non configurata, salto export lead")
+        return
+
+    if not AIRTABLE_BASE_ID or not AIRTABLE_TABLE_NAME:
+        print("[AIRTABLE] BASE_ID o TABLE_NAME non configurati, salto export lead")
+        return
+
+    try:
+        provincia = ""
+
+        if lead.z_city:
+            info = resolve_city(lead.z_city, db)
+            if info and info.get("provincia"):
+                provincia = info["provincia"]
+
+        payload = {
+            "records": [
+                {
+                    "fields": {
+                        "Stato Lead": "Da contattare",
+                        "Nome": lead.z_name or "",
+                        "Cellulare": lead.z_cell or "",
+                        "Email": lead.z_email or "",
+                        "Provincia": provincia,
+                        "CAP": "",
+                        "Origine Lead": "Chatbot",
+                    }
+                }
+            ]
+        }
+
+        headers = {
+            "Authorization": f"Bearer {AIRTABLE_API_KEY}",
+            "Content-Type": "application/json",
+        }
+
+        url = f"{AIRTABLE_BASE_URL}/{AIRTABLE_BASE_ID}/{AIRTABLE_TABLE_NAME}"
+        print(f"[AIRTABLE] POST {url} payload={payload}")
+
+        resp = requests.post(url, headers=headers, json=payload, timeout=8)
+        print(f"[AIRTABLE] response status={resp.status_code}, body={resp.text[:400]!r}")
+        resp.raise_for_status()
+
+    except Exception as e:
+        # Non blocchiamo la chat se Airtable ha problemi
+        print(f"[AIRTABLE] Errore durante export lead: {e!r}")
+
 
 
 # ---------- OpenAI call ----------
@@ -1040,8 +1111,15 @@ def chat(req: ChatRequest, db: Session = Depends(get_db)):
                             extra["dealer_last_provincia"] = provincia
                             print("[CHAT] dealer_nearby: seconda provincia senza sedi -> messaggio finale consulente")
 
+     # salviamo lo stato precedente per capire se è appena passato a "completed"
+    prev_status = lead.status
     lead.status = new_status
     print(f"[CHAT] lead.status finale={lead.status}")
+
+    # se il lead è appena passato a completed, lo spediamo ad Airtable
+    if prev_status != "completed" and lead.status == "completed":
+        print("[CHAT] lead appena completato, invio ad Airtable")
+        push_lead_to_airtable(lead, db)
 
     history.append({"role": "assistant", "content": assistant_reply})
     state.history_json = json.dumps(history)
