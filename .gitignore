@@ -2,8 +2,11 @@
 .env
 
 # virtualenv
-venv/
+.venv/
 
 # roba di Python
 __pycache__/
 *.pyc
+
+#roba local
+beatrice.db
