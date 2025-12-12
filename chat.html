@@ -190,7 +190,6 @@
       padding: 0 16px;
       font-size: 14px;
       cursor: pointer;
-      /* gradiente solo rosso, niente arancione */
       background: linear-gradient(135deg, #991b1b, #ef4444);
       color: #ffffff;
       display: flex;
@@ -399,7 +398,41 @@
       }
     });
 
+    // helper: crea una singola bubble
+    function createBubble(role, text, showMetaLabel = true) {
+      const row = document.createElement("div");
+      row.className = "message-row " + (role === "assistant" ? "assistant" : "user");
+
+      const meta = document.createElement("div");
+      meta.className = "message-meta";
+      meta.textContent = showMetaLabel ? (role === "assistant" ? "Beatrice" : "Tu") : "";
+
+      const bubble = document.createElement("div");
+      bubble.className = "message-bubble";
+      bubble.textContent = text;
+
+      const wrapper = document.createElement("div");
+      wrapper.appendChild(meta);
+      wrapper.appendChild(bubble);
+
+      row.appendChild(wrapper);
+      messagesEl.appendChild(row);
+    }
+
     function appendMessage(role, text) {
+      // caso speciale: lista concessionarie -> una sola bubble intera
+      const lower = (text || "").toLowerCase();
+      const isDealerList =
+        role === "assistant" &&
+        lower.includes("le sedi dfsk più vicine");
+
+      if (isDealerList) {
+        createBubble(role, text, true);
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+        return;
+      }
+
+      // logica standard (split solo sui doppi a capo, per messaggi lunghi generici)
       let parts = text
         .split(/\n{2,}/)
         .map((p) => p.trim())
@@ -438,23 +471,7 @@
       }
 
       parts.forEach((part, index) => {
-        const row = document.createElement("div");
-        row.className = "message-row " + (role === "assistant" ? "assistant" : "user");
-
-        const meta = document.createElement("div");
-        meta.className = "message-meta";
-        meta.textContent = index === 0 ? (role === "assistant" ? "Beatrice" : "Tu") : "";
-
-        const bubble = document.createElement("div");
-        bubble.className = "message-bubble";
-        bubble.textContent = part;
-
-        const wrapper = document.createElement("div");
-        wrapper.appendChild(meta);
-        wrapper.appendChild(bubble);
-
-        row.appendChild(wrapper);
-        messagesEl.appendChild(row);
+        createBubble(role, part, index === 0);
       });
 
       messagesEl.scrollTop = messagesEl.scrollHeight;
