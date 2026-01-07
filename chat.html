@@ -629,19 +629,48 @@
         const data = await res.json();
         console.log("LLM raw response:", data);
 
-        // 1) immagini modello solo se lo chiede il backend
-        // ora supporta sia stringa (legacy) sia lista (nuovo formato)
+        // 1) testo dell'assistente + (eventuali) foto dei modelli
+        // ora supporta sia stringa (legacy) sia lista (nuovo formato).
+        // Se sono presenti più modelli e il testo ha abbastanza frasi, interleghiamo:
+        // - 1a frase (intro)
+        // - frase su modello i
+        // - gallery modello i
+        const replyText = data.reply || "Ok.";
         const showModels = data.show_model_images ?? null;
-        if (Array.isArray(showModels)) {
-          for (const modelName of showModels) {
-            if (modelName) appendModelImageBubble(modelName);
-          }
-        } else if (typeof showModels === "string" && showModels.trim()) {
-          appendModelImageBubble(showModels);
-        }
 
-        // 2) testo dell'assistente
-        appendMessage("assistant", data.reply || "Ok.");
+        if (Array.isArray(showModels) && showModels.length > 1) {
+          const sentences = replyText
+            .split(/(?<=[.!?])\s+/)
+            .map((s) => s.trim())
+            .filter((s) => s.length > 0);
+
+          if (sentences.length >= showModels.length + 1) {
+            appendMessage("assistant", sentences[0]);
+            for (let i = 0; i < showModels.length; i++) {
+              appendMessage("assistant", sentences[i + 1]);
+              const modelName = showModels[i];
+              if (modelName) appendModelImageBubble(modelName);
+            }
+            const rest = sentences.slice(showModels.length + 1).join(" ");
+            if (rest) appendMessage("assistant", rest);
+          } else {
+            // fallback: prima testo, poi tutte le gallery
+            appendMessage("assistant", replyText);
+            for (const modelName of showModels) {
+              if (modelName) appendModelImageBubble(modelName);
+            }
+          }
+        } else {
+          // caso 1 modello (o legacy): prima testo, poi gallery (se presente)
+          appendMessage("assistant", replyText);
+          if (Array.isArray(showModels)) {
+            for (const modelName of showModels) {
+              if (modelName) appendModelImageBubble(modelName);
+            }
+          } else if (typeof showModels === "string" && showModels.trim()) {
+            appendModelImageBubble(showModels);
+          }
+        }
 
         // 3) stato lead
         if (data.lead) {

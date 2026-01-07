@@ -521,6 +521,16 @@ RICHIESTE DI FOTO
   - ["Glory 500", "Glory F5"]
 - Conferma nel testo che gli stai mostrando le foto di quel modello.
 - Puoi aggiungere frasi tipo: "Se poi sei interessato, possiamo fissare un appuntamento nella sede più vicina".
+- Quando mostri le foto di PIÙ modelli nello stesso turno (show_model_images con 2 o più modelli):
+  - Struttura assistant_reply in frasi nello stesso ordine della lista, così le foto possono comparire subito dopo la frase del modello.
+  - Esempio con due modelli (massimo 3 frasi totali):
+    - 1) frase introduttiva generale
+    - 2) frase su primo modello della lista (es. Glory 500)
+    - 3) frase su secondo modello della lista (es. Glory F5)
+- Non chiedere mai nome/città/cellulare per poter mostrare le foto: puoi mostrarle anche senza dati personali.
+- Se nel contesto trovi "foto_gia_mostrate_ultimo_turno" (non null):
+  - NON ripetere le stesse foto a meno che l’utente non le richieda esplicitamente di nuovo (es. "rimandami le foto", "fammi rivedere").
+  - Se l’utente risponde solo "sì/ok" dopo che le foto sono state già mostrate, interpreta come interesse e passa oltre: proponi appuntamento e chiedi il nome (se manca) o la città (se serve), lasciando show_model_images = null.
 
 RICHIESTE SEDI / CONCESSIONARIE VICINE
 - Se chiede dove sono le sedi, le concessionarie nella sua zona, la sede più vicina, ecc.:
@@ -617,7 +627,7 @@ Quando riconosci una delle domande qui sotto, usa il contenuto indicato come gui
      - Spiega che alcuni modelli della gamma DFSK sono adatti ai neopatentati, evitando di far intendere che lo siano tutti.
      - Indica come opzioni principali Glory 500 e Glory F5, poi fai una mini presentazione di entrambe e una differenza chiara.
    - Struttura tipica (massimo 3 frasi):
-     - "Alcuni dei nostri modelli sono guidabili anche dai neopatentati, in particolare DFSK Glory 500 e DFSK Glory F5. Glory 500 è il SUV compatto più scelto, pratico e versatile, mentre Glory F5 ha uno stile più sportivo e un carattere più dinamico. Se vuoi, ti mostro le foto di entrambi e ti aiuto anche a fissare un appuntamento in concessionaria."
+     - "Alcuni dei nostri modelli sono guidabili anche dai neopatentati, in particolare DFSK Glory 500 e Glory F5. Glory 500 è il SUV compatto più scelto, pratico e versatile. Glory F5 ha uno stile più sportivo e un carattere più dinamico."
    - Foto:
      - Se l’utente chiede neopatentati e sembra interessato, mostra le immagini di entrambi i modelli.
 
@@ -668,6 +678,7 @@ def build_llm_input(
     history: List[Dict[str, str]],
     kb_matches: List[Dict[str, Any]],
     user_message: str,
+    last_shown_models: Optional[List[str]] = None,
 ) -> str:
     lines: List[str] = []
 
@@ -680,6 +691,9 @@ def build_llm_input(
     lines.append(f"- status: {lead.status}")
     lines.append(
         f"- dati_raccolti: nome={lead.z_name or ''}, città={lead.z_city or ''}, cell={lead.z_cell or ''}"
+    )
+    lines.append(
+        f"- foto_gia_mostrate_ultimo_turno: {last_shown_models if last_shown_models else 'null'}"
     )
 
     missing = missing_fields(lead)
@@ -759,8 +773,9 @@ def call_beatrice(
     history: List[Dict[str, str]],
     kb_matches: List[Dict[str, Any]],
     user_message: str,
+    last_shown_models: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
-    prompt = build_llm_input(lead, history, kb_matches, user_message)
+    prompt = build_llm_input(lead, history, kb_matches, user_message, last_shown_models)
 
     try:
         print(f"[LLM] CHIAMATA AL MODELLO gpt-4o-mini")
@@ -936,6 +951,9 @@ def chat(req: ChatRequest, db: Session = Depends(get_db)):
 
     dealer_no_sede_stage = int(extra.get("dealer_no_sede_stage", 0))  # 0 = nessun problema, 1 = prima provincia senza sedi, 2 = già spiegato
     last_prov = extra.get("dealer_last_provincia")
+    last_shown_models = extra.get("last_shown_models")
+    if not isinstance(last_shown_models, list):
+        last_shown_models = None
 
     print(f"[CHAT] extra iniziale: {extra}")
     print(f"[CHAT] dealer_no_sede_stage={dealer_no_sede_stage}, last_prov={last_prov}")
@@ -964,7 +982,7 @@ def chat(req: ChatRequest, db: Session = Depends(get_db)):
         "status": lead.status,
     })
 
-    llm_data = call_beatrice(lead, history, kb_matches, req.message)
+    llm_data = call_beatrice(lead, history, kb_matches, req.message, last_shown_models)
 
     print("[CHAT] llm_data grezzo:", json.dumps(llm_data, indent=2, ensure_ascii=False))
 
@@ -1047,6 +1065,7 @@ def chat(req: ChatRequest, db: Session = Depends(get_db)):
         print("[CHAT] Entrato in ramo dealer_nearby")
         # niente immagini in un turno dedicato alle sedi
         show_model_images = None
+        extra["last_shown_models"] = None
 
         # città di lavoro: prima quella estratta dal modello, poi quella eventualmente già salvata
         city_text: Optional[str] = None
@@ -1131,6 +1150,9 @@ def chat(req: ChatRequest, db: Session = Depends(get_db)):
     prev_status = lead.status
     lead.status = new_status
     print(f"[CHAT] lead.status finale={lead.status}")
+
+    # memorizziamo quali foto sono state mostrate in questo turno (per evitare ripetizioni al turno successivo)
+    extra["last_shown_models"] = show_model_images if show_model_images else None
 
     # se il lead è appena passato a completed, lo spediamo ad Airtable
     if prev_status != "completed" and lead.status == "completed":
