@@ -80,7 +80,7 @@ Il modello deve SEMPRE restituire un JSON di questo tipo:
     "z_cell": "oppure null"
   },
   "new_status": "in_progress | completed | failed",
-  "show_model_images": "Glory 500 | Glory 600 | Glory F5 | Glory E5 | null",
+  "show_model_images": ["Glory 500" | "Glory 600" | "Glory F5" | "Glory E5"] oppure null,
   "dealer_city_raw": "nome città oppure null"
 }
 ```
@@ -121,7 +121,7 @@ Nel ramo dealer_nearby il backend forza new_status allo stato attuale del lead, 
 
 null di default.
 
-Valori validi: "Glory 500", "Glory 600", "Glory F5", "Glory E5".
+Valori validi: lista di uno o più tra "Glory 500", "Glory 600", "Glory F5", "Glory E5".
 
 Il frontend usa questo campo per mostrare le immagini del modello richiesto.
 

@@ -11,7 +11,7 @@ from typing import List, Optional, Dict, Any, Literal
 import requests
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import create_engine, Column, Integer, String, DateTime, Text
 from sqlalchemy.orm import sessionmaker, declarative_base, Session
 
@@ -516,7 +516,9 @@ MODELLI DI CUI PUOI PARLARE
 RICHIESTE DI FOTO
 - Se chiede foto in generale, chiedi di quale modello vuole vedere le immagini, e imposta "show_model_images" = null.
 - Se chiede foto di un modello specifico, imposta "show_model_images" in modo esatto:
-  - "Glory 500" | "Glory 600" | "Glory F5" | "Glory E5"
+  - ["Glory 500"] | ["Glory 600"] | ["Glory F5"] | ["Glory E5"]
+- Se chiede foto di più modelli (es. "500 e F5"), imposta "show_model_images" con la lista dei modelli richiesti:
+  - ["Glory 500", "Glory F5"]
 - Conferma nel testo che gli stai mostrando le foto di quel modello.
 - Puoi aggiungere frasi tipo: "Se poi sei interessato, possiamo fissare un appuntamento nella sede più vicina".
 
@@ -610,18 +612,14 @@ Quando riconosci una delle domande qui sotto, usa il contenuto indicato come gui
      - "A quale modello è interessato in particolare?"
    - Se l’utente specifica il modello, continua in modo discorsivo e, se ha senso, proponi l’appuntamento in sede.
 
-8) Domanda: "Possono guidarla i neopatentati?"
+8) Domanda: "Possono guidarla i neopatentati?" (o richieste tipo "auto per neopatentati")
    - Risposta guida:
-     - Conferma che le vetture DFSK sono guidabili anche dai neopatentati.
-     - Usa il modello Glory 500 come esempio principale e best seller.
-   - Eccezione sulla regola dei prezzi:
-     - Solo per questa domanda puoi citare che il Glory 500 ha un prezzo di ingresso molto accessibile, a partire da circa 16.500 €, se serve a rassicurare l’utente.
-   - Struttura tipica:
-     - "Sì, le nostre vetture sono guidabili anche dai neopatentati. In particolare il modello Glory 500, che è la nostra best seller, è pensato proprio per chi cerca un SUV compatto e accessibile, con un prezzo che parte da circa 16.500 €."
-   - Se l’utente sembra interessato:
-     - Puoi proporre una breve presentazione del modello e, se appropriato, mostrare le immagini impostando show_model_images = "Glory 500".
-     - Esempio frase:
-       - "Se vuole le posso mostrare anche le foto della Glory 500 e aiutarla a fissare un appuntamento in concessionaria."
+     - Spiega che alcuni modelli della gamma DFSK sono adatti ai neopatentati, evitando di far intendere che lo siano tutti.
+     - Indica come opzioni principali Glory 500 e Glory F5, poi fai una mini presentazione di entrambe e una differenza chiara.
+   - Struttura tipica (massimo 3 frasi):
+     - "Alcuni dei nostri modelli sono guidabili anche dai neopatentati, in particolare DFSK Glory 500 e DFSK Glory F5. Glory 500 è il SUV compatto più scelto, pratico e versatile, mentre Glory F5 ha uno stile più sportivo e un carattere più dinamico. Se vuoi, ti mostro le foto di entrambi e ti aiuto anche a fissare un appuntamento in concessionaria."
+   - Foto:
+     - Se l’utente chiede neopatentati e sembra interessato, mostra le immagini di entrambi i modelli.
 
 9) Domanda: "Posso parlare con un operatore umano?"
    - Risposta guida:
@@ -644,7 +642,7 @@ Devi restituire SEMPRE e SOLO un oggetto JSON con questa struttura:
     "z_cell": "oppure null"
   },
   "new_status": "in_progress | completed | failed",
-  "show_model_images": "Glory 500 | Glory 600 | Glory F5 | Glory E5 | null",
+  "show_model_images": ["Glory 500" | "Glory 600" | "Glory F5" | "Glory E5"] oppure null,
   "dealer_city_raw": "nome città oppure null"
 }
 
@@ -657,7 +655,7 @@ Devi restituire SEMPRE e SOLO un oggetto JSON con questa struttura:
   - "completed" se hai già tutti i dati,
   - "failed" se l'utente non vuole proseguire.
 - show_model_images:
-  - Nome esatto del modello quando mostri le immagini, altrimenti null.
+  - Lista con uno o più nomi esatti dei modelli quando mostri le immagini, altrimenti null.
 - dealer_city_raw:
   - Nome città capito dal messaggio quando parli di sedi, altrimenti null.
 
@@ -739,8 +737,21 @@ class BeatriceLLMOutput(BaseModel):
     ]
     lead_updates: LeadPatch = Field(default_factory=LeadPatch)
     new_status: Literal["in_progress", "completed", "failed"] = "in_progress"
-    show_model_images: Optional[str] = None  # "Glory 500" | "Glory 600" | "Glory F5" | "Glory E5" | None
+    show_model_images: Optional[
+        List[Literal["Glory 500", "Glory 600", "Glory F5", "Glory E5"]]
+    ] = None
     dealer_city_raw: Optional[str] = None
+
+    @field_validator("show_model_images", mode="before")
+    @classmethod
+    def normalize_show_model_images(cls, v):
+        # compatibilità: se il modello restituisce per errore una stringa, la convertiamo in lista
+        if v is None:
+            return None
+        if isinstance(v, str):
+            vv = v.strip()
+            return [vv] if vv else None
+        return v
 
 
 def call_beatrice(
@@ -838,7 +849,7 @@ class ChatResponse(BaseModel):
     reply: str
     step: str
     lead: LeadOut
-    show_model_images: Optional[str] = None
+    show_model_images: Optional[List[str]] = None
 
 
 @app.on_event("startup")
@@ -963,6 +974,12 @@ def chat(req: ChatRequest, db: Session = Depends(get_db)):
     show_model_images = llm_data.get("show_model_images")
     intent_type = llm_data.get("intent_type", "other")
     dealer_city_raw = llm_data.get("dealer_city_raw")
+
+    # compatibilità: se arriva una stringa, normalizziamo in lista
+    if isinstance(show_model_images, str):
+        show_model_images = [show_model_images.strip()] if show_model_images.strip() else None
+    if isinstance(show_model_images, list) and len(show_model_images) == 0:
+        show_model_images = None
 
     print(f"[CHAT] intent_type={intent_type}")
     print(f"[CHAT] dealer_city_raw={dealer_city_raw}")

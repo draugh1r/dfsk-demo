@@ -630,9 +630,14 @@
         console.log("LLM raw response:", data);
 
         // 1) immagini modello solo se lo chiede il backend
-        const modelFromLLM = data.show_model_images || null;
-        if (modelFromLLM) {
-          appendModelImageBubble(modelFromLLM);
+        // ora supporta sia stringa (legacy) sia lista (nuovo formato)
+        const showModels = data.show_model_images ?? null;
+        if (Array.isArray(showModels)) {
+          for (const modelName of showModels) {
+            if (modelName) appendModelImageBubble(modelName);
+          }
+        } else if (typeof showModels === "string" && showModels.trim()) {
+          appendModelImageBubble(showModels);
         }
 
         // 2) testo dell'assistente
