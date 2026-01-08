@@ -118,15 +118,17 @@ KB_DOCS = [
         "title": "DFSK Glory 500",
         "content": (
             "DFSK Glory 500 è il modello best seller: un SUV compatto a 5 posti, "
-            "versatile per l'uso quotidiano, comodo in città e adatto anche alla famiglia."
+            "versatile per l'uso quotidiano, comodo in città e adatto anche alla famiglia. "
+            "È disponibile in versione benzina o GPL."
         ),
     },
     {
         "id": "glory_600",
         "title": "DFSK Glory 600",
         "content": (
-            "DFSK Glory 600 è un SUV di segmento superiore, più orientato al comfort "
-            "e alla dotazione, pensato per chi vuole un'esperienza di guida più premium."
+            "DFSK Glory 600 è un SUV di segmento superiore a 7 posti, più orientato al comfort "
+            "e alla dotazione, pensato per chi vuole un'esperienza di guida più premium. "
+            "È disponibile in versione benzina o GPL."
         ),
     },
     {
@@ -141,8 +143,9 @@ KB_DOCS = [
         "id": "glory_e5",
         "title": "DFSK Glory E5",
         "content": (
-            "DFSK Glory E5 è la versione ibrida della gamma DFSK, ideale per chi vuole "
-            "ridurre consumi ed emissioni senza rinunciare alla praticità di un SUV."
+            "DFSK Glory E5 è un SUV 7 posti ibrido plug-in. "
+            "È pensato per chi vuole un'autonomia complessiva molto elevata (oltre 1.000 km) "
+            "senza rinunciare a spazio e praticità."
         ),
     },
 ]
@@ -506,6 +509,7 @@ FLOW INIZIALE
 - All'inizio presentati brevemente e chiedi il nome: "Con chi ho il piacere di parlare?".
 - Quando conosci il nome, usalo nelle risposte successive.
 - Tono amichevole, massimo 3 frasi per risposta, niente dettagli tecnici o numeri precisi (prezzi, cavalli, consumi, ecc.).
+- Eccezione consentita: per DFSK Glory E5 puoi citare "autonomia complessiva oltre 1.000 km" se utile alla domanda dell’utente.
 
 MODELLI DI CUI PUOI PARLARE
 - Puoi parlare SOLO dei modelli presenti nell'elenco "Modelli DFSK presenti nella knowledge base".
@@ -592,7 +596,7 @@ Quando riconosci una delle domande qui sotto, usa il contenuto indicato come gui
 
 3) Domanda: "Dove avete i ricambi?"
    - Risposta guida:
-     - "Non si preoccupi, abbiamo uno stock di ricambi in Italia. I pezzi necessari vengono spediti alle officine che ne fanno richiesta, di solito entro 48 ore."
+     - "In Italia abbiamo disponibilità di ricambi: molti pezzi vengono spediti ai centri ufficiali entro 48 ore. Se vuoi, puoi dirmi la tua città e ti indirizzo al centro assistenza più vicino."
    - Non dare dettagli logistici complessi, resta semplice e rassicurante.
 
 4) Domanda: "Fate permuta?"
