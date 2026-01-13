@@ -4,6 +4,28 @@
   <meta charset="UTF-8" />
   <title>Chat DFSK Beatrice</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <script>
+    (function () {
+      try {
+        const params = new URLSearchParams(window.location.search);
+        const embedParam = (params.get("embed") || "").toLowerCase();
+        const isEmbedParam =
+          embedParam === "1" || embedParam === "true" || embedParam === "yes";
+        let isIframed = false;
+        try {
+          isIframed = window.self !== window.top;
+        } catch (_) {
+          isIframed = true;
+        }
+
+        if (isEmbedParam || isIframed) {
+          document.documentElement.classList.add("embed");
+        }
+      } catch (_) {
+        // ignore
+      }
+    })();
+  </script>
   <style>
     * {
       box-sizing: border-box;
@@ -13,6 +35,10 @@
     }
 
     body {
+      background: transparent;
+    }
+
+    html:not(.embed) body {
       background: radial-gradient(circle at top, #fca5a5 0, #f3f4f6 40%, #e5e7eb 100%);
       display: flex;
       justify-content: center;
@@ -299,6 +325,32 @@
     .message-bubble a:hover {
       text-decoration: none;
     }
+
+    /* ==========================
+       EMBED MODE (widget/iframe)
+       - attivo se in iframe o con ?embed=1
+       - rimuove sfondo e "card centrata"
+       ========================== */
+    html.embed body {
+      background: transparent;
+      display: block;
+      min-height: 0;
+      padding: 0;
+    }
+
+    html.embed .chat-container {
+      width: 100%;
+      max-width: none;
+      height: 100vh;
+      max-height: none;
+      border-radius: 0;
+      box-shadow: none;
+      border: none;
+    }
+
+    html.embed .chat-footer {
+      display: none;
+    }
   </style>
 </head>
 <body>
@@ -343,7 +395,30 @@
   </div>
 
   <script>
-    const API_BASE = window.location.origin;
+    const IS_EMBED = document.documentElement.classList.contains("embed");
+
+    const API_BASE = (() => {
+      const params = new URLSearchParams(window.location.search);
+      const override = params.get("api_base");
+      return override ? decodeURIComponent(override) : window.location.origin;
+    })();
+
+    const ASSET_BASE = (() => {
+      const params = new URLSearchParams(window.location.search);
+      const override = params.get("asset_base");
+      const base = override ? decodeURIComponent(override) : API_BASE;
+      return base.replace(/\/+$/, "");
+    })();
+
+    function assetUrl(path) {
+      if (!path) return path;
+      // già assoluto
+      if (/^https?:\/\//i.test(path)) return path;
+      // relativo assoluto ("/static/..")
+      if (path.startsWith("/")) return `${ASSET_BASE}${path}`;
+      // relativo semplice
+      return `${ASSET_BASE}/${path}`;
+    }
 
     let sessionId = null;
     let lastLead = null;
@@ -360,20 +435,20 @@
     // immagini: fronte + interni
     const MODEL_IMAGES = {
       "Glory 500": {
-        front: "/static/cars/glory_500_fronte.png",
-        interior: "/static/cars/glory_500_interno.jpg",
+        front: assetUrl("/static/cars/glory_500_fronte.png"),
+        interior: assetUrl("/static/cars/glory_500_interno.jpg"),
       },
       "Glory 600": {
-        front: "/static/cars/glory_600_fronte.png",
-        interior: "/static/cars/glory_600_interno.jpg",
+        front: assetUrl("/static/cars/glory_600_fronte.png"),
+        interior: assetUrl("/static/cars/glory_600_interno.jpg"),
       },
       "Glory F5": {
-        front: "/static/cars/glory_F5_fronte.jpg",
-        interior: "/static/cars/glory_F5_interno.jpg",
+        front: assetUrl("/static/cars/glory_F5_fronte.jpg"),
+        interior: assetUrl("/static/cars/glory_F5_interno.jpg"),
       },
       "Glory E5": {
-        front: "/static/cars/glory_E5_fronte.png",
-        interior: "/static/cars/glory_E5_interno.jpg",
+        front: assetUrl("/static/cars/glory_E5_fronte.png"),
+        interior: assetUrl("/static/cars/glory_E5_interno.jpg"),
       },
     };
 
