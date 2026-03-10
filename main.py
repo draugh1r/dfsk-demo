@@ -60,7 +60,6 @@ class Lead(Base):
     z_name = Column(String, nullable=True)
     z_city = Column(String, nullable=True)       # città
     z_cell = Column(String, nullable=True)
-    # campi legacy che non usiamo più nella logica, li lasciamo per compatibilità DB
     z_email = Column(String, nullable=True)
     z_provincia = Column(String, nullable=True)
     status = Column(String, default="in_progress")  # in_progress, completed, failed
@@ -202,7 +201,7 @@ def normalize_phone(raw: str) -> str:
     return digits
 
 
-FIELD_ORDER = ["z_name", "z_city", "z_cell"]
+FIELD_ORDER = ["z_name", "z_city", "z_cell", "z_email"]
 
 
 def all_fields_filled(lead: "Lead") -> bool:
@@ -437,7 +436,7 @@ def push_lead_to_airtable(lead: Lead, db: Session) -> None:
     - Stato Lead   -> "Da contattare"
     - Nome         -> lead.z_name
     - Cellulare    -> lead.z_cell
-    - Email        -> lead.z_email (per ora vuoto nella nostra logica)
+    - Email        -> lead.z_email
     - Provincia    -> ricavata da resolve_city(z_city) se possibile
     - Origine Lead -> "Chatbot"
     """
@@ -501,6 +500,7 @@ OBIETTIVO PRINCIPALE
   - nome (z_name)
   - città (z_city)
   - numero di cellulare (z_cell)
+  - email (z_email)
 
 OBIETTIVO SECONDARIO
 - Aiutare l'utente a orientarsi tra i modelli DFSK (solo quelli elencati nella knowledge base).
@@ -509,7 +509,7 @@ FLOW INIZIALE
 - All'inizio presentati brevemente e chiedi il nome: "Con chi ho il piacere di parlare?".
 - Quando conosci il nome, usalo nelle risposte successive.
 - Tono amichevole, massimo 3 frasi per risposta, niente dettagli tecnici o numeri precisi (prezzi, cavalli, consumi, ecc.).
-- Eccezione consentita: per DFSK Glory E5 puoi citare "autonomia complessiva oltre 1.000 km" se utile alla domanda dell’utente.
+- Eccezione consentita: per DFSK Glory E5 puoi citare "autonomia complessiva oltre 1.000 km" se utile alla domanda dell'utente.
 
 MODELLI DI CUI PUOI PARLARE
 - Puoi parlare SOLO dei modelli presenti nell'elenco "Modelli DFSK presenti nella knowledge base".
@@ -541,8 +541,8 @@ RICHIESTE DI FOTO
     - 3) frase su secondo modello della lista (es. Glory F5)
 - Non chiedere mai nome/città/cellulare per poter mostrare le foto: puoi mostrarle anche senza dati personali.
 - Se nel contesto trovi "foto_gia_mostrate_ultimo_turno" (non null):
-  - NON ripetere le stesse foto a meno che l’utente non le richieda esplicitamente di nuovo (es. "rimandami le foto", "fammi rivedere").
-  - Se l’utente risponde solo "sì/ok" dopo che le foto sono state già mostrate, interpreta come interesse e passa oltre: proponi appuntamento e chiedi il nome (se manca) o la città (se serve), lasciando show_model_images = null.
+  - NON ripetere le stesse foto a meno che l'utente non le richieda esplicitamente di nuovo (es. "rimandami le foto", "fammi rivedere").
+  - Se l'utente risponde solo "sì/ok" dopo che le foto sono state già mostrate, interpreta come interesse e passa oltre: proponi appuntamento e chiedi il nome (se manca) o la città (se serve), lasciando show_model_images = null.
 
 RICHIESTE SEDI / CONCESSIONARIE VICINE
 - Se chiede dove sono le sedi, le concessionarie nella sua zona, la sede più vicina, ecc.:
@@ -557,7 +557,7 @@ RICHIESTE SEDI / CONCESSIONARIE VICINE
   - "Ora ti indico le sedi DFSK nella tua zona."
 
 GESTIONE DATI PERSONALI
-- Obiettivo: raccogliere z_name, z_city, z_cell quando l'utente è interessato all'appuntamento.
+- Obiettivo: raccogliere z_name, z_city, z_cell, z_email quando l'utente è interessato all'appuntamento.
 - Non inserire mai nei campi del lead frasi come "non voglio dirlo", insulti o testo non valido.
 - Se rifiuta di dare un dato:
   - nel JSON il campo corrispondente resta null,
@@ -567,12 +567,12 @@ GESTIONE DATI PERSONALI
 CAMPI MANCANTI
 - Il contesto contiene "campi_mancanti".
 - Se vedi "nessuno (tutti i dati necessari sono presenti)":
-  - NON chiedere più nome, città o cellulare.
+  - NON chiedere più nome, città, cellulare o email.
   - Ringrazia e conferma che la richiesta di appuntamento è stata registrata.
   - Imposta new_status = "completed".
 
 INTENTI
-- lead_answer: l'utente risponde a domande sui dati (nome, città, numero).
+- lead_answer: l'utente risponde a domande sui dati (nome, città, numero, email).
 - lead_refusal: rifiuta di dare dati.
 - lead_objection: chiede chiarimenti sui dati ("a che ti serve il mio numero?").
 - kb_question: chiede informazioni sui modelli DFSK.
@@ -597,10 +597,10 @@ Quando riconosci una delle domande qui sotto, usa il contenuto indicato come gui
      - "Le vetture DFSK sono prodotte in Cina e arrivano direttamente in Italia, dove garantiamo qualità, assistenza e supporto rapido tramite la nostra rete di concessionarie."
 
 2) Domanda: "Dove posso trovare le officine service?"
-   - Obiettivo: indirizzare l’utente verso l’officina autorizzata più vicina.
+   - Obiettivo: indirizzare l'utente verso l'officina autorizzata più vicina.
    - Chiedi in che città si trova.
    - Risposta guida:
-     - "Per indicarle l’officina autorizzata più vicina ho bisogno di sapere dove si trova. Mi può indicare la città in cui risiede?"
+     - "Per indicarle l'officina autorizzata più vicina ho bisogno di sapere dove si trova. Mi può indicare la città in cui risiede?"
 
 3) Domanda: "Dove avete i ricambi?"
    - Risposta guida:
@@ -632,7 +632,7 @@ Quando riconosci una delle domande qui sotto, usa il contenuto indicato come gui
      - "I prezzi aggiornati sono visibili sul sito ufficiale DFSK e possono variare leggermente a seconda del concessionario. Se vuole, posso aiutarla a trovare il concessionario più vicino per ricevere un preventivo dettagliato."
    - Aggiungi sempre una domanda per capire meglio:
      - "A quale modello è interessato in particolare?"
-   - Se l’utente specifica il modello, continua in modo discorsivo e, se ha senso, proponi l’appuntamento in sede.
+   - Se l'utente specifica il modello, continua in modo discorsivo e, se ha senso, proponi l'appuntamento in sede.
 
 8) Domanda: "Possono guidarla i neopatentati?" (o richieste tipo "auto per neopatentati")
    - Risposta guida:
@@ -641,7 +641,7 @@ Quando riconosci una delle domande qui sotto, usa il contenuto indicato come gui
    - Struttura tipica (massimo 3 frasi):
      - "Alcuni dei nostri modelli sono guidabili anche dai neopatentati, in particolare DFSK Glory 500 e Glory F5. Glory 500 è il SUV compatto più scelto, pratico e versatile. Glory F5 ha uno stile più sportivo e un carattere più dinamico."
    - Foto:
-     - Se l’utente chiede neopatentati e sembra interessato, mostra le immagini di entrambi i modelli.
+     - Se l'utente chiede neopatentati e sembra interessato, mostra le immagini di entrambi i modelli.
 
 9) Domanda: "Posso parlare con un operatore umano?"
    - Risposta guida:
@@ -649,7 +649,7 @@ Quando riconosci una delle domande qui sotto, usa il contenuto indicato come gui
      - Fornisci il link ufficiale ai contatti DFSK.
    - Esempio di formulazione:
      - "Certamente, se preferisce può parlare direttamente con un nostro responsabile. Può contattarci tramite la pagina ufficiale dei contatti DFSK: https://dfskcar.it/contatti"
-   - Dopo questa risposta non insistere subito sulla raccolta dati, a meno che l’utente torni a parlare di appuntamento o sede vicina.
+   - Dopo questa risposta non insistere subito sulla raccolta dati, a meno che l'utente torni a parlare di appuntamento o sede vicina.
 
 
 FORMATO DI RISPOSTA (OBBLIGATORIO)
@@ -661,7 +661,8 @@ Devi restituire SEMPRE e SOLO un oggetto JSON con questa struttura:
   "lead_updates": {
     "z_name": "oppure null",
     "z_city": "oppure null",
-    "z_cell": "oppure null"
+    "z_cell": "oppure null",
+    "z_email": "oppure null"
   },
   "new_status": "in_progress | completed | failed",
   "show_model_images": ["Glory 500" | "Glory 600" | "Glory F5" | "Glory E5"] oppure null,
@@ -702,7 +703,7 @@ def build_llm_input(
     lines.append("\nStato attuale del lead:")
     lines.append(f"- status: {lead.status}")
     lines.append(
-        f"- dati_raccolti: nome={lead.z_name or ''}, città={lead.z_city or ''}, cell={lead.z_cell or ''}"
+        f"- dati_raccolti: nome={lead.z_name or ''}, città={lead.z_city or ''}, cell={lead.z_cell or ''}, email={lead.z_email or ''}"
     )
     lines.append(
         f"- foto_gia_mostrate_ultimo_turno: {last_shown_models if last_shown_models else 'null'}"
@@ -715,7 +716,7 @@ def build_llm_input(
         lines.append("- campi_mancanti: nessuno (tutti i dati necessari sono presenti)")
         lines.append(
             "IMPORTANTE: campi_mancanti è 'nessuno (tutti i dati necessari sono presenti)'. "
-            "In questo caso NON devi più chiedere dati personali (nome, città, cellulare), "
+            "In questo caso NON devi più chiedere dati personali (nome, città, cellulare, email), "
             "devi solo ringraziare e confermare la richiesta di appuntamento, "
             'e impostare new_status = "completed".'
         )
@@ -748,6 +749,7 @@ class LeadPatch(BaseModel):
     z_name: Optional[str] = None
     z_city: Optional[str] = None
     z_cell: Optional[str] = None
+    z_email: Optional[str] = None
 
 
 class BeatriceLLMOutput(BaseModel):
@@ -816,6 +818,7 @@ def call_beatrice(
                 "z_name": None,
                 "z_city": None,
                 "z_cell": None,
+                "z_email": None,
             },
             "new_status": "in_progress",
             "show_model_images": None,
@@ -869,6 +872,7 @@ class LeadOut(BaseModel):
     z_name: Optional[str] = None
     z_city: Optional[str] = None
     z_cell: Optional[str] = None
+    z_email: Optional[str] = None
     status: str
 
 
@@ -991,6 +995,7 @@ def chat(req: ChatRequest, db: Session = Depends(get_db)):
         "z_name": lead.z_name,
         "z_city": lead.z_city,
         "z_cell": lead.z_cell,
+        "z_email": lead.z_email,
         "status": lead.status,
     })
 
@@ -1069,6 +1074,7 @@ def chat(req: ChatRequest, db: Session = Depends(get_db)):
         "z_name": lead.z_name,
         "z_city": lead.z_city,
         "z_cell": lead.z_cell,
+        "z_email": lead.z_email,
         "status": lead.status,
     })
 
@@ -1190,6 +1196,7 @@ def chat(req: ChatRequest, db: Session = Depends(get_db)):
         z_name=lead.z_name,
         z_city=lead.z_city,
         z_cell=lead.z_cell,
+        z_email=lead.z_email,
         status=lead.status,
     )
 
