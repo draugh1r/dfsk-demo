@@ -488,7 +488,7 @@ def push_lead_to_airtable(lead: Lead, db: Session) -> None:
                         "Provincia": provincia,
                         "Città": lead.z_city,
                         "Origine Lead": "Chatbot",
-                        "chat": chat_text,
+                        "Chat": chat_text,
                     }
                 }
             ]
