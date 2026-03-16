@@ -428,6 +428,17 @@ def format_dealers_for_reply(city_info: Dict[str, str], dealers: List[Dealer]) -
 
 ### lead su airtable ###
 
+def _format_chat_history(history: List[Dict[str, str]]) -> str:
+    """Formatta la history JSON in testo leggibile per Airtable."""
+    lines: List[str] = []
+    for msg in history:
+        role = msg.get("role", "")
+        content = msg.get("content", "")
+        prefix = "Utente" if role == "user" else "Beatrice"
+        lines.append(f"{prefix}: {content}")
+    return "\n\n".join(lines)
+
+
 def push_lead_to_airtable(lead: Lead, db: Session) -> None:
     """
     Invia il lead a Airtable quando lo stato passa a 'completed'.
@@ -439,6 +450,7 @@ def push_lead_to_airtable(lead: Lead, db: Session) -> None:
     - Email        -> lead.z_email
     - Provincia    -> ricavata da resolve_city(z_city) se possibile
     - Origine Lead -> "Chatbot"
+    - chat         -> conversazione completa formattata
     """
     if not AIRTABLE_API_KEY:
         print("[AIRTABLE] API key non configurata, salto export lead")
@@ -456,6 +468,15 @@ def push_lead_to_airtable(lead: Lead, db: Session) -> None:
             if info and info.get("provincia"):
                 provincia = info["provincia"]
 
+        chat_text = ""
+        conv_state = db.query(ConversationState).filter_by(session_id=lead.session_id).first()
+        if conv_state and conv_state.history_json:
+            try:
+                history = json.loads(conv_state.history_json)
+                chat_text = _format_chat_history(history)
+            except Exception as e:
+                print(f"[AIRTABLE] Errore parsing history_json: {e!r}")
+
         payload = {
             "records": [
                 {
@@ -467,6 +488,7 @@ def push_lead_to_airtable(lead: Lead, db: Session) -> None:
                         "Provincia": provincia,
                         "Città": lead.z_city,
                         "Origine Lead": "Chatbot",
+                        "chat": chat_text,
                     }
                 }
             ]
@@ -1172,15 +1194,16 @@ def chat(req: ChatRequest, db: Session = Depends(get_db)):
     # memorizziamo quali foto sono state mostrate in questo turno (per evitare ripetizioni al turno successivo)
     extra["last_shown_models"] = show_model_images if show_model_images else None
 
-    # se il lead è appena passato a completed, lo spediamo ad Airtable
-    if prev_status != "completed" and lead.status == "completed":
-        print("[CHAT] lead appena completato, invio ad Airtable")
-        push_lead_to_airtable(lead, db)
-
     history.append({"role": "assistant", "content": assistant_reply})
     state.history_json = json.dumps(history)
     state.step = lead.status
     state.extra_json = json.dumps(extra)
+
+    # se il lead è appena passato a completed, lo spediamo ad Airtable
+    # (dopo aver aggiornato history_json così la chat è completa)
+    if prev_status != "completed" and lead.status == "completed":
+        print("[CHAT] lead appena completato, invio ad Airtable")
+        push_lead_to_airtable(lead, db)
 
     db.add(lead)
     db.add(state)
