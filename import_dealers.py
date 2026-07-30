@@ -1,4 +1,5 @@
 import os
+import re
 import argparse
 from typing import Optional
 
@@ -66,6 +67,17 @@ def pick_email(referente: str, rif_vendita: str, rif_servizio: str) -> Optional[
         if candidate and "@" in candidate:
             return candidate
     return None
+
+
+def extract_city_from_address(address: str) -> str:
+    """Estrae il comune da indirizzi tipo '..., 26013 Crema CR'."""
+    address = (address or "").strip()
+    if not address:
+        return ""
+    match = re.search(r"\b\d{5}\s+(.+?)\s+[A-Z]{2}\s*$", address, re.IGNORECASE)
+    if match:
+        return match.group(1).strip().title()
+    return ""
 
 
 def import_dealers(xlsx_path: str, truncate: bool = False) -> None:
@@ -149,8 +161,12 @@ def import_dealers(xlsx_path: str, truncate: bool = False) -> None:
                 )
                 continue
 
-            # City: non la usiamo per la logica, la lasciamo vuota
-            city = ""
+            # City: estrai dal showroom, officina o sede legale
+            city = (
+                extract_city_from_address(showroom)
+                or extract_city_from_address(officina)
+                or extract_city_from_address(sede_legale)
+            )
 
             # Decidiamo email (se c'è)
             email = pick_email(referente, rif_vendita, rif_servizio)

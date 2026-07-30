@@ -3,6 +3,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 import os
+import re
 import json
 import uuid
 from datetime import datetime
@@ -12,7 +13,7 @@ import requests
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, Text
+from sqlalchemy import create_engine, Column, Integer, String, DateTime, Text, or_
 from sqlalchemy.orm import sessionmaker, declarative_base, Session
 
 from openai import OpenAI
@@ -139,10 +140,10 @@ KB_DOCS = [
         ),
     },
     {
-        "id": "glory_e5",
-        "title": "DFSK Glory E5",
+        "id": "e5_phev",
+        "title": "DFSK E5 Phev",
         "content": (
-            "DFSK Glory E5 è un SUV 7 posti ibrido plug-in. "
+            "DFSK E5 Phev è un SUV 7 posti ibrido plug-in. "
             "È pensato per chi vuole un'autonomia complessiva molto elevata (oltre 1.000 km) "
             "senza rinunciare a spazio e praticità."
         ),
@@ -263,9 +264,12 @@ def resolve_city(raw_city: str, db: Optional[Session] = None) -> Optional[Dict[s
         print(f"[CITY] cache hit per {cache_key}, valore={CITY_CACHE[cache_key]}")
         return CITY_CACHE[cache_key]
 
-    # Se manca base o token, fai solo normalizzazione minima
+    # Se manca base o token, normalizza la città e prova a dedurre la provincia dal DB dealer
     if not COMUNI_API_BASE or not COMUNI_API_TOKEN:
-        info = {"city": name.title(), "provincia": ""}
+        provincia = ""
+        if db is not None:
+            provincia = infer_provincia_from_dealers(db, name)
+        info = {"city": name.title(), "provincia": provincia}
         CITY_CACHE[cache_key] = info
         print(f"[CITY] COMUNI_API_BASE o COMUNI_API_TOKEN non configurati, uso fallback {info}")
         return info
@@ -345,10 +349,44 @@ def resolve_city(raw_city: str, db: Optional[Session] = None) -> Optional[Dict[s
         return info
 
 
+def extract_city_from_address(address: str) -> str:
+    """Estrae il comune da indirizzi tipo '..., 26013 Crema CR'."""
+    address = (address or "").strip()
+    if not address:
+        return ""
+    match = re.search(r"\b\d{5}\s+(.+?)\s+[A-Z]{2}\s*$", address, re.IGNORECASE)
+    if match:
+        return match.group(1).strip().title()
+    return ""
+
+
+def _dealer_city_filters(city: str):
+    """Match città su campo city o come comune finale negli indirizzi (CAP Comune PR)."""
+    city = (city or "").strip()
+    end_pattern = f"% {city} __"
+    return or_(
+        Dealer.city.ilike(city),
+        Dealer.address_showroom.ilike(end_pattern),
+        Dealer.address_officina.ilike(end_pattern),
+    )
+
+
+def infer_provincia_from_dealers(db: Session, city: str) -> str:
+    """Fallback: deduce la provincia cercando la città negli indirizzi dei dealer."""
+    city = (city or "").strip()
+    if not city:
+        return ""
+
+    dealer = db.query(Dealer).filter(_dealer_city_filters(city)).first()
+    if dealer and dealer.provincia:
+        return dealer.provincia.upper()
+    return ""
+
+
 def find_dealers_near(db: Session, city_info: Dict[str, str], limit: int = 3) -> List[Dealer]:
     """
     Ritorna una lista di Dealer vicini:
-    - prima prova match esatto sulla città
+    - prima prova match sulla città (campo city o comune negli indirizzi)
     - se non trova nulla, prova sulla provincia (sigla, es. 'BO')
     """
     city = (city_info.get("city") or "").strip()
@@ -361,12 +399,12 @@ def find_dealers_near(db: Session, city_info: Dict[str, str], limit: int = 3) ->
     if city:
         dealers = (
             db.query(Dealer)
-            .filter(Dealer.city.ilike(city))
+            .filter(_dealer_city_filters(city))
             .order_by(Dealer.id.asc())
             .limit(limit)
             .all()
         )
-        print(f"[DEALER] trovati {len(dealers)} dealer per città")
+        print(f"[DEALER] trovati {len(dealers)} dealer per città/indirizzo")
         if dealers:
             return dealers
 
@@ -374,7 +412,7 @@ def find_dealers_near(db: Session, city_info: Dict[str, str], limit: int = 3) ->
         dealers = (
             db.query(Dealer)
             .filter(Dealer.provincia == provincia)
-            .order_by(Dealer.city.asc())
+            .order_by(Dealer.city.asc(), Dealer.id.asc())
             .limit(limit)
             .all()
         )
@@ -531,26 +569,26 @@ FLOW INIZIALE
 - All'inizio presentati brevemente e chiedi il nome: "Con chi ho il piacere di parlare?".
 - Quando conosci il nome, usalo nelle risposte successive.
 - Tono amichevole, massimo 3 frasi per risposta, niente dettagli tecnici o numeri precisi (prezzi, cavalli, consumi, ecc.).
-- Eccezione consentita: per DFSK Glory E5 puoi citare "autonomia complessiva oltre 1.000 km" se utile alla domanda dell'utente.
+- Eccezione consentita: per DFSK E5 Phev puoi citare "autonomia complessiva oltre 1.000 km" se utile alla domanda dell'utente.
 
 MODELLI DI CUI PUOI PARLARE
 - Puoi parlare SOLO dei modelli presenti nell'elenco "Modelli DFSK presenti nella knowledge base".
-- Modelli: Glory 500 (best seller), Glory 600, Glory F5, Glory E5 (ibrida).
+- Modelli: Glory 500 (best seller), Glory 600, Glory F5, E5 Phev (ibrida).
 - Se l'utente chiede "che modelli avete", cita questi quattro e metti in evidenza Glory 500 come il più scelto.
 - Non inventare altri modelli.
 
 POSTI E CAPACITÀ DEI MODELLI
 - Glory 500: SUV compatto a 5 posti.
 - Glory 600: SUV a 7 posti (benzina o GPL).
-- Glory E5: SUV a 7 posti ibrido plug-in.
+- E5 Phev: SUV a 7 posti ibrido plug-in.
 - Glory F5: SUV a 5 posti.
-- Se l'utente chiede un'auto a 7 posti, proponi Glory 600 o Glory E5.
+- Se l'utente chiede un'auto a 7 posti, proponi Glory 600 o E5 Phev.
 - Se l'utente chiede un'auto a 5 posti, proponi Glory 500 o Glory F5.
 
 RICHIESTE DI FOTO
 - Se chiede foto in generale, chiedi di quale modello vuole vedere le immagini, e imposta "show_model_images" = null.
 - Se chiede foto di un modello specifico, imposta "show_model_images" in modo esatto:
-  - ["Glory 500"] | ["Glory 600"] | ["Glory F5"] | ["Glory E5"]
+  - ["Glory 500"] | ["Glory 600"] | ["Glory F5"] | ["E5 Phev"]
 - Se chiede foto di più modelli (es. "500 e F5"), imposta "show_model_images" con la lista dei modelli richiesti:
   - ["Glory 500", "Glory F5"]
 - Conferma nel testo che gli stai mostrando le foto di quel modello.
@@ -687,7 +725,7 @@ Devi restituire SEMPRE e SOLO un oggetto JSON con questa struttura:
     "z_email": "oppure null"
   },
   "new_status": "in_progress | completed | failed",
-  "show_model_images": ["Glory 500" | "Glory 600" | "Glory F5" | "Glory E5"] oppure null,
+  "show_model_images": ["Glory 500" | "Glory 600" | "Glory F5" | "E5 Phev"] oppure null,
   "dealer_city_raw": "nome città oppure null"
 }
 
@@ -788,7 +826,7 @@ class BeatriceLLMOutput(BaseModel):
     lead_updates: LeadPatch = Field(default_factory=LeadPatch)
     new_status: Literal["in_progress", "completed", "failed"] = "in_progress"
     show_model_images: Optional[
-        List[Literal["Glory 500", "Glory 600", "Glory F5", "Glory E5"]]
+        List[Literal["Glory 500", "Glory 600", "Glory F5", "E5 Phev"]]
     ] = None
     dealer_city_raw: Optional[str] = None
 
