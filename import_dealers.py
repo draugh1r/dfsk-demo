@@ -74,7 +74,7 @@ def extract_city_from_address(address: str) -> str:
     address = (address or "").strip()
     if not address:
         return ""
-    match = re.search(r"\b\d{5}\s+(.+?)\s+[A-Z]{2}\s*$", address, re.IGNORECASE)
+    match = re.search(r"\b\d{5}\s+(.+?)\s+\(?[A-Z]{2}\)?\s*$", address, re.IGNORECASE)
     if match:
         return match.group(1).strip().title()
     return ""

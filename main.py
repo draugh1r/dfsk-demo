@@ -13,7 +13,7 @@ import requests
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, Text, or_
+from sqlalchemy import create_engine, Column, Integer, String, DateTime, Text, or_, func
 from sqlalchemy.orm import sessionmaker, declarative_base, Session
 
 from openai import OpenAI
@@ -236,6 +236,53 @@ def _extract_prov_istat_from_comune_istat(istat_code: str) -> Optional[str]:
     return None
 
 
+def _clean_location_name(raw_location: str) -> str:
+    """Ripulisce input come 'sedi in provincia di Mantova' lasciando solo il luogo."""
+    name = (raw_location or "").strip()
+    name = re.sub(
+        r"^\s*(?:sedi(?:\s+dfsk)?\s+)?(?:in|nella|della)?\s*provincia\s+(?:di\s+)?",
+        "",
+        name,
+        flags=re.IGNORECASE,
+    )
+    return name.strip(" \t,.;:!?-")
+
+
+def resolve_province_from_db(db: Optional[Session], raw_location: str) -> Optional[Dict[str, str]]:
+    """Riconosce localmente nome o sigla di provincia, senza dipendere da API esterne."""
+    if db is None:
+        return None
+
+    name = _clean_location_name(raw_location)
+    if not name:
+        return None
+
+    normalized_code = name.upper()
+    try:
+        province = (
+            db.query(ProvinceItalia)
+            .filter(
+                or_(
+                    func.upper(func.trim(ProvinceItalia.sigla)) == normalized_code,
+                    ProvinceItalia.provincia.ilike(name),
+                )
+            )
+            .first()
+        )
+    except Exception as exc:
+        print(f"[CITY] errore query locale province_italia: {exc!r}")
+        return None
+
+    if not province:
+        return None
+
+    return {
+        "city": (province.provincia or name).strip(),
+        "provincia": (province.sigla or "").strip().upper(),
+        "scope": "province",
+    }
+
+
 def resolve_city(raw_city: str, db: Optional[Session] = None) -> Optional[Dict[str, str]]:
     """
     Risolve una città italiana usando l'API /cerca_comuni di cap.openapi.it.
@@ -254,12 +301,21 @@ def resolve_city(raw_city: str, db: Optional[Session] = None) -> Optional[Dict[s
         print("[CITY] raw_city vuota")
         return None
 
-    name = raw_city.strip()
+    name = _clean_location_name(raw_city)
     if not name:
         print("[CITY] raw_city solo spazi")
         return None
 
     cache_key = name.lower()
+
+    # Nomi e sigle delle province sono già disponibili nel DB. Risolverli qui evita
+    # falsi negativi quando l'API comuni non è configurata o temporaneamente fallisce.
+    local_province = resolve_province_from_db(db, name)
+    if local_province:
+        CITY_CACHE[cache_key] = local_province
+        print(f"[CITY] provincia riconosciuta localmente: {local_province}")
+        return local_province
+
     if cache_key in CITY_CACHE:
         print(f"[CITY] cache hit per {cache_key}, valore={CITY_CACHE[cache_key]}")
         return CITY_CACHE[cache_key]
@@ -301,13 +357,17 @@ def resolve_city(raw_city: str, db: Optional[Session] = None) -> Optional[Dict[s
 
         if not data.get("success"):
             print("[CITY] success=false nella risposta API")
-            return None
+            info = {"city": name.title(), "provincia": infer_provincia_from_dealers(db, name) if db else ""}
+            CITY_CACHE[cache_key] = info
+            return info
 
         data_block = data.get("data") or {}
         results = data_block.get("result") or []
         if not results:
             print("[CITY] nessun comune in data.result")
-            return None
+            info = {"city": name.title(), "provincia": infer_provincia_from_dealers(db, name) if db else ""}
+            CITY_CACHE[cache_key] = info
+            return info
 
         first = results[0]
         city_name = first.get("comune") or name.title()
@@ -337,14 +397,18 @@ def resolve_city(raw_city: str, db: Optional[Session] = None) -> Optional[Dict[s
                 except Exception as e:
                     print(f"[CITY] errore query province_italia: {e!r}")
 
+        if not provincia_sigla and db is not None:
+            provincia_sigla = infer_provincia_from_dealers(db, city_name)
+
         info = {"city": city_name, "provincia": provincia_sigla}
         CITY_CACHE[cache_key] = info
         print(f"[CITY] resolve_city finale info={info}")
         return info
 
     except Exception as e:
-        print(f"[CITY] errore chiamando cerca_comuni: {e!r}, uso fallback minimale")
-        info = {"city": name.title(), "provincia": ""}
+        print(f"[CITY] errore chiamando cerca_comuni: {e!r}, uso fallback locale")
+        provincia = infer_provincia_from_dealers(db, name) if db is not None else ""
+        info = {"city": name.title(), "provincia": provincia}
         CITY_CACHE[cache_key] = info
         return info
 
@@ -354,7 +418,7 @@ def extract_city_from_address(address: str) -> str:
     address = (address or "").strip()
     if not address:
         return ""
-    match = re.search(r"\b\d{5}\s+(.+?)\s+[A-Z]{2}\s*$", address, re.IGNORECASE)
+    match = re.search(r"\b\d{5}\s+(.+?)\s+\(?[A-Z]{2}\)?\s*$", address, re.IGNORECASE)
     if match:
         return match.group(1).strip().title()
     return ""
@@ -364,10 +428,13 @@ def _dealer_city_filters(city: str):
     """Match città su campo city o come comune finale negli indirizzi (CAP Comune PR)."""
     city = (city or "").strip()
     end_pattern = f"% {city} __"
+    parenthesized_end_pattern = f"% {city} (__)"
     return or_(
         Dealer.city.ilike(city),
         Dealer.address_showroom.ilike(end_pattern),
+        Dealer.address_showroom.ilike(parenthesized_end_pattern),
         Dealer.address_officina.ilike(end_pattern),
+        Dealer.address_officina.ilike(parenthesized_end_pattern),
     )
 
 
@@ -383,6 +450,24 @@ def infer_provincia_from_dealers(db: Session, city: str) -> str:
     return ""
 
 
+def _address_province_suffix(address: Optional[str]) -> str:
+    """Estrae la sigla finale da indirizzi che terminano con 'MI' o '(MI)'."""
+    match = re.search(r"(?:\s|\()([A-Z]{2})\)?\s*$", address or "", re.IGNORECASE)
+    return match.group(1).upper() if match else ""
+
+
+def _dealer_location_is_consistent(dealer: Dealer) -> bool:
+    """Evita di mostrare una sede se l'indirizzo contraddice la provincia censita."""
+    displayed_address = dealer.address_showroom or dealer.address_officina
+    address_province = _address_province_suffix(displayed_address)
+    dealer_province = (dealer.provincia or "").strip().upper()
+    return not address_province or address_province == dealer_province
+
+
+def _valid_dealers(dealers: List[Dealer], limit: int) -> List[Dealer]:
+    return [dealer for dealer in dealers if _dealer_location_is_consistent(dealer)][:limit]
+
+
 def find_dealers_near(db: Session, city_info: Dict[str, str], limit: int = 3) -> List[Dealer]:
     """
     Ritorna una lista di Dealer vicini:
@@ -391,19 +476,20 @@ def find_dealers_near(db: Session, city_info: Dict[str, str], limit: int = 3) ->
     """
     city = (city_info.get("city") or "").strip()
     provincia = (city_info.get("provincia") or "").strip().upper()
+    province_scope = city_info.get("scope") == "province"
 
     print(f"[DEALER] find_dealers_near city={city!r}, provincia={provincia!r}")
 
     dealers: List[Dealer] = []
 
-    if city:
+    if city and not province_scope:
         dealers = (
             db.query(Dealer)
             .filter(_dealer_city_filters(city))
             .order_by(Dealer.id.asc())
-            .limit(limit)
             .all()
         )
+        dealers = _valid_dealers(dealers, limit)
         print(f"[DEALER] trovati {len(dealers)} dealer per città/indirizzo")
         if dealers:
             return dealers
@@ -411,11 +497,11 @@ def find_dealers_near(db: Session, city_info: Dict[str, str], limit: int = 3) ->
     if provincia:
         dealers = (
             db.query(Dealer)
-            .filter(Dealer.provincia == provincia)
+            .filter(func.upper(func.trim(Dealer.provincia)) == provincia)
             .order_by(Dealer.city.asc(), Dealer.id.asc())
-            .limit(limit)
             .all()
         )
+        dealers = _valid_dealers(dealers, limit)
         print(f"[DEALER] trovati {len(dealers)} dealer per provincia")
 
     return dealers
@@ -446,7 +532,7 @@ def format_dealers_for_reply(city_info: Dict[str, str], dealers: List[Dealer]) -
         elif d.address_officina:
             desc_parts.append(d.address_officina)
 
-        if d.city or d.provincia:
+        if d.city:
             loc = (d.city or "").strip()
             if d.provincia:
                 loc += f" ({d.provincia})"
