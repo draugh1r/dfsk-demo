@@ -1,5 +1,6 @@
 # file di env
 .env
+DATABASE_URL
 
 # virtualenv
 .venv/

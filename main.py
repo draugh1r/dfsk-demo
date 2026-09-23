@@ -17,6 +17,7 @@ from sqlalchemy import create_engine, Column, Integer, String, DateTime, Text, o
 from sqlalchemy.orm import sessionmaker, declarative_base, Session
 
 from openai import OpenAI
+from local_geography import find_comune, find_province
 
 # ---------- Config ----------
 
@@ -34,13 +35,6 @@ engine = create_engine(
 )
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
-
-# Endpoint dell'API "cerca comuni" (usa COMUNI_API_TOKEN già esistente)
-COMUNI_API_BASE = os.getenv("COMUNI_API_BASE", "https://cap.openapi.it").rstrip("/")
-COMUNI_API_TOKEN = os.getenv("COMUNI_API_TOKEN", "").strip()
-
-# Cache semplice in memoria per i comuni risolti
-CITY_CACHE: Dict[str, Dict[str, str]] = {}
 
 # ---------- Airtable Config ----------
 
@@ -213,29 +207,6 @@ def missing_fields(lead: "Lead") -> List[str]:
     return [f for f in FIELD_ORDER if not getattr(lead, f)]
 
 
-def _extract_prov_istat_from_comune_istat(istat_code: str) -> Optional[str]:
-    """
-    L'API sui comuni restituisce istat del comune spesso a 5 cifre (es. '37008'),
-    mentre la tabella province_italia usa codici ISTAT provincia a 3 cifre (es. '037').
-
-    Convenzione che funziona con i dati di cap.openapi.it:
-    - se len == 6: prime 3 cifre sono il codice provincia (PPPCCC)
-    - se len == 5: il codice provincia è '0' + prime 2 cifre (es. '37008' -> '037')
-    - altrimenti: prendo comunque le prime 3 cifre come fallback.
-    """
-    istat_code = (istat_code or "").strip()
-    if not istat_code:
-        return None
-
-    if len(istat_code) == 6:
-        return istat_code[:3]
-    if len(istat_code) == 5:
-        return "0" + istat_code[:2]
-    if len(istat_code) >= 3:
-        return istat_code[:3]
-    return None
-
-
 def _clean_location_name(raw_location: str) -> str:
     """Ripulisce input come 'sedi in provincia di Mantova' lasciando solo il luogo."""
     name = (raw_location or "").strip()
@@ -284,18 +255,7 @@ def resolve_province_from_db(db: Optional[Session], raw_location: str) -> Option
 
 
 def resolve_city(raw_city: str, db: Optional[Session] = None) -> Optional[Dict[str, str]]:
-    """
-    Risolve una città italiana usando l'API /cerca_comuni di cap.openapi.it.
-
-    Passi:
-    - chiama /cerca_comuni?comune=<nome>
-    - prende il primo risultato e l'ISTAT del comune
-    - ricava il codice provincia ISTAT a 3 cifre
-    - cerca nella tabella province_italia quella provincia
-    - ritorna {"city": <nome comune>, "provincia": <sigla provincia>} oppure None
-
-    Se qualcosa va storto, restituisce None oppure fa fallback minimale (solo city, provincia vuota).
-    """
+    """Risolve provincia o comune dall'elenco ISTAT salvato nel progetto."""
     print(f"[CITY] resolve_city input={raw_city!r}")
     if not raw_city:
         print("[CITY] raw_city vuota")
@@ -306,111 +266,41 @@ def resolve_city(raw_city: str, db: Optional[Session] = None) -> Optional[Dict[s
         print("[CITY] raw_city solo spazi")
         return None
 
-    cache_key = name.lower()
-
-    # Nomi e sigle delle province sono già disponibili nel DB. Risolverli qui evita
-    # falsi negativi quando l'API comuni non è configurata o temporaneamente fallisce.
-    local_province = resolve_province_from_db(db, name)
+    local_province = find_province(name) or resolve_province_from_db(db, name)
     if local_province:
-        CITY_CACHE[cache_key] = local_province
         print(f"[CITY] provincia riconosciuta localmente: {local_province}")
         return local_province
 
-    if cache_key in CITY_CACHE:
-        print(f"[CITY] cache hit per {cache_key}, valore={CITY_CACHE[cache_key]}")
-        return CITY_CACHE[cache_key]
+    info = find_comune(name)
+    print(f"[CITY] comune riconosciuto localmente: {info}")
+    return info
 
-    # Se manca base o token, normalizza la città e prova a dedurre la provincia dal DB dealer
-    if not COMUNI_API_BASE or not COMUNI_API_TOKEN:
-        provincia = ""
-        if db is not None:
-            provincia = infer_provincia_from_dealers(db, name)
-        info = {"city": name.title(), "provincia": provincia}
-        CITY_CACHE[cache_key] = info
-        print(f"[CITY] COMUNI_API_BASE o COMUNI_API_TOKEN non configurati, uso fallback {info}")
-        return info
 
-    # Costruisco l'URL corretto per /cerca_comuni
-    base = COMUNI_API_BASE
-    if "cerca_comuni" in base:
-        url = base
-    else:
-        url = f"{base}/cerca_comuni"
+def resolve_requested_locations(
+    user_message: str,
+    dealer_city_raw: Optional[str],
+    saved_city: Optional[str],
+    db: Session,
+) -> List[Dict[str, str]]:
+    """Dà precedenza ai luoghi scritti ora rispetto alla città salvata nel lead."""
+    for text in (user_message, dealer_city_raw):
+        if not text:
+            continue
+        parts = re.split(r"\s+(?:o|oppure|e)\s+|[,;/]", str(text), flags=re.IGNORECASE)
+        if 1 < len(parts) <= 3:
+            locations = [resolve_city(part, db) for part in parts]
+            if all(locations) and all(item["scope"] == "province" for item in locations):
+                # Mantiene l'ordine richiesto e non mostra due volte la stessa provincia.
+                return list({item["provincia"]: item for item in locations}.values())
 
-    headers = {
-        "Authorization": f"Bearer {COMUNI_API_TOKEN}",
-        "Accept": "application/json",
-    }
+        location = resolve_city(str(text), db)
+        if location:
+            return [location]
 
-    try:
-        print(f"[CITY] chiamata a {url} per comune={name!r}")
-        resp = requests.get(
-            url,
-            params={"comune": name},
-            headers=headers,
-            timeout=4,
-        )
-        print(f"[CITY] cerca_comuni status_code={resp.status_code}")
-        resp.raise_for_status()
-        data = resp.json()
-        print(f"[CITY] cerca_comuni response_json={data!r}")
-
-        if not data.get("success"):
-            print("[CITY] success=false nella risposta API")
-            info = {"city": name.title(), "provincia": infer_provincia_from_dealers(db, name) if db else ""}
-            CITY_CACHE[cache_key] = info
-            return info
-
-        data_block = data.get("data") or {}
-        results = data_block.get("result") or []
-        if not results:
-            print("[CITY] nessun comune in data.result")
-            info = {"city": name.title(), "provincia": infer_provincia_from_dealers(db, name) if db else ""}
-            CITY_CACHE[cache_key] = info
-            return info
-
-        first = results[0]
-        city_name = first.get("comune") or name.title()
-        istat_code = first.get("istat")
-
-        provincia_sigla = ""
-
-        # Se abbiamo l'istat del comune e una sessione DB, proviamo a risalire alla provincia
-        if istat_code and db is not None:
-            prov_istat = _extract_prov_istat_from_comune_istat(istat_code)
-            print(f"[CITY] istat comune={istat_code!r}, prov_istat derivato={prov_istat!r}")
-            if prov_istat:
-                try:
-                    prov_row = (
-                        db.query(ProvinceItalia)
-                        .filter(ProvinceItalia.istat == prov_istat)
-                        .first()
-                    )
-                    if prov_row:
-                        provincia_sigla = (prov_row.sigla or "").upper()
-                        print(
-                            f"[CITY] trovata provincia in DB per istat {prov_istat}: "
-                            f"{prov_row.provincia} ({provincia_sigla})"
-                        )
-                    else:
-                        print(f"[CITY] nessuna provincia trovata in DB per istat {prov_istat}")
-                except Exception as e:
-                    print(f"[CITY] errore query province_italia: {e!r}")
-
-        if not provincia_sigla and db is not None:
-            provincia_sigla = infer_provincia_from_dealers(db, city_name)
-
-        info = {"city": city_name, "provincia": provincia_sigla}
-        CITY_CACHE[cache_key] = info
-        print(f"[CITY] resolve_city finale info={info}")
-        return info
-
-    except Exception as e:
-        print(f"[CITY] errore chiamando cerca_comuni: {e!r}, uso fallback locale")
-        provincia = infer_provincia_from_dealers(db, name) if db is not None else ""
-        info = {"city": name.title(), "provincia": provincia}
-        CITY_CACHE[cache_key] = info
-        return info
+    if dealer_city_raw:
+        return []
+    saved_location = resolve_city(saved_city, db) if saved_city else None
+    return [saved_location] if saved_location else []
 
 
 def extract_city_from_address(address: str) -> str:
@@ -436,18 +326,6 @@ def _dealer_city_filters(city: str):
         Dealer.address_officina.ilike(end_pattern),
         Dealer.address_officina.ilike(parenthesized_end_pattern),
     )
-
-
-def infer_provincia_from_dealers(db: Session, city: str) -> str:
-    """Fallback: deduce la provincia cercando la città negli indirizzi dei dealer."""
-    city = (city or "").strip()
-    if not city:
-        return ""
-
-    dealer = db.query(Dealer).filter(_dealer_city_filters(city)).first()
-    if dealer and dealer.provincia:
-        return dealer.provincia.upper()
-    return ""
 
 
 def _address_province_suffix(address: Optional[str]) -> str:
@@ -485,7 +363,10 @@ def find_dealers_near(db: Session, city_info: Dict[str, str], limit: int = 3) ->
     if city and not province_scope:
         dealers = (
             db.query(Dealer)
-            .filter(_dealer_city_filters(city))
+            .filter(
+                _dealer_city_filters(city),
+                func.upper(func.trim(Dealer.provincia)) == provincia,
+            )
             .order_by(Dealer.id.asc())
             .all()
         )
@@ -507,7 +388,9 @@ def find_dealers_near(db: Session, city_info: Dict[str, str], limit: int = 3) ->
     return dealers
 
 
-def format_dealers_for_reply(city_info: Dict[str, str], dealers: List[Dealer]) -> str:
+def format_dealers_for_reply(
+    city_info: Dict[str, str], dealers: List[Dealer], include_closing: bool = True
+) -> str:
     """
     Converte la lista di Dealer in un testo da mandare all'utente.
     Qui assumiamo che dealers NON sia vuoto.
@@ -522,7 +405,7 @@ def format_dealers_for_reply(city_info: Dict[str, str], dealers: List[Dealer]) -
     if prov:
         city_label = f"{city_label} ({prov})"
 
-    lines.append(f"Le sedi DFSK più vicine alla zona di {city_label} sono:")
+    lines.append(f"Le sedi DFSK disponibili per la zona di {city_label} sono:")
 
     for d in dealers:
         desc_parts: List[str] = [d.company_name]
@@ -545,9 +428,10 @@ def format_dealers_for_reply(city_info: Dict[str, str], dealers: List[Dealer]) -
 
         lines.append(f"- {line}")
 
-    lines.append(
-        "Se vuoi, posso aiutarti a fissare un appuntamento nella sede che preferisci tra queste."
-    )
+    if include_closing:
+        lines.append(
+            "Se vuoi, posso aiutarti a fissare un appuntamento nella sede che preferisci tra queste."
+        )
     return "\n".join(lines)
 
 ### lead su airtable ###
@@ -1231,84 +1115,59 @@ def chat(req: ChatRequest, db: Session = Depends(get_db)):
         show_model_images = None
         extra["last_shown_models"] = None
 
-        # città di lavoro: prima quella estratta dal modello, poi quella eventualmente già salvata
-        city_text: Optional[str] = None
-        if dealer_city_raw:
-            city_text = str(dealer_city_raw)
-        elif lead.z_city:
-            city_text = lead.z_city
+        locations = resolve_requested_locations(req.message, dealer_city_raw, lead.z_city, db)
+        print(f"[CHAT] dealer_nearby: locations={locations!r}")
 
-        print(f"[CHAT] dealer_nearby: city_text={city_text!r}")
-
-        if not city_text:
-            # non abbiamo ancora una città -> chiediamo la città
-            assistant_reply = (
-                "Per indicarti le sedi DFSK nella tua zona ho bisogno di sapere in che città ti trovi. "
-                "In che città sei?"
-            )
-            print("[CHAT] dealer_nearby: nessuna city -> chiedo città esplicitamente")
-        else:
-            city_info = resolve_city(city_text, db)
-            if not city_info:
+        if not locations:
+            if not dealer_city_raw and not lead.z_city:
                 assistant_reply = (
-                    "Non sono riuscita a riconoscere con precisione la città. "
-                    "Puoi ripetermi il nome della città, magari indicando anche la provincia?"
+                    "Per indicarti le sedi DFSK nella tua zona ho bisogno di sapere in che città ti trovi. "
+                    "In che città sei?"
                 )
-                print("[CHAT] dealer_nearby: resolve_city ha restituito None")
             else:
-                dealers = find_dealers_near(db, city_info, limit=3)
-                provincia = (city_info.get("provincia") or "").upper()
-                print(f"[CHAT] dealer_nearby: provincia risolta={provincia!r}, num_dealers={len(dealers)}")
+                assistant_reply = (
+                    "Non sono riuscita a riconoscere con precisione la località. "
+                    "Puoi ripetere il comune, magari indicando anche la provincia?"
+                )
+            print("[CHAT] dealer_nearby: località non riconosciuta")
+        else:
+            matches = [(info, find_dealers_near(db, info, limit=3)) for info in locations]
+            found = [(info, dealers) for info, dealers in matches if dealers]
+            print(f"[CHAT] dealer_nearby: risultati per provincia={[(i['provincia'], len(d)) for i, d in matches]}")
 
-                if dealers:
-                    # abbiamo trovato sedi -> reset logica "nessuna sede"
-                    extra["dealer_no_sede_stage"] = 0
-                    extra["dealer_last_provincia"] = provincia
-                    assistant_reply = format_dealers_for_reply(city_info, dealers)
-                    print("[CHAT] dealer_nearby: trovate sedi, reply formattata")
-                    # se non avevamo ancora città nel lead e il resolver l'ha capita, salviamola
-                    if not lead.z_city and city_info.get("city"):
-                        lead.z_city = city_info["city"]
-                        print(f"[CHAT] dealer_nearby: salvo z_city nel lead = {lead.z_city!r}")
+            if found:
+                extra["dealer_no_sede_stage"] = 0
+                extra["dealer_last_provincia"] = found[0][0]["provincia"]
+                if len(locations) == 1:
+                    assistant_reply = format_dealers_for_reply(*found[0])
                 else:
-                    # nessuna sede trovata
-                    print("[CHAT] dealer_nearby: nessuna sede trovata per city/provincia")
-                    if not provincia:
-                        # caso raro: niente provincia nota dall'API
-                        if dealer_no_sede_stage == 0:
-                            assistant_reply = (
-                                "Al momento non trovo sedi DFSK registrate nella zona che hai indicato. "
-                                "Puoi indicarmi la provincia più vicina a te?"
-                            )
-                            extra["dealer_no_sede_stage"] = 1
-                            print("[CHAT] dealer_nearby: no prov, primo giro -> chiedo provincia vicina")
-                        else:
-                            assistant_reply = (
-                                "Al momento non abbiamo sedi DFSK registrate nella zona che hai indicato.\n\n"
-                                "Se vuoi possiamo farti ricontattare da un nostro consulente."
-                            )
-                            extra["dealer_no_sede_stage"] = 2
-                            print("[CHAT] dealer_nearby: no prov, secondo giro -> messaggio finale consulente")
-                    else:
-                        # abbiamo una provincia dal resolver
-                        if dealer_no_sede_stage == 0:
-                            # primo tentativo senza sedi in questa provincia
-                            assistant_reply = (
-                                f"Nella tua provincia {provincia} non abbiamo sedi DFSK registrate, "
-                                "puoi indicarci la provincia più vicina a te?"
-                            )
-                            extra["dealer_no_sede_stage"] = 1
-                            extra["dealer_last_provincia"] = provincia
-                            print("[CHAT] dealer_nearby: prima provincia senza sedi -> chiedo provincia vicina")
-                        else:
-                            # secondo tentativo senza sedi (anche se la provincia è diversa, per l'utente è comunque 'secondo giro')
-                            assistant_reply = (
-                                f"Al momento non abbiamo sedi DFSK registrate in provincia {provincia}.\n\n"
-                                "Se vuoi possiamo farti ricontattare da un nostro consulente."
-                            )
-                            extra["dealer_no_sede_stage"] = 2
-                            extra["dealer_last_provincia"] = provincia
-                            print("[CHAT] dealer_nearby: seconda provincia senza sedi -> messaggio finale consulente")
+                    sections = [
+                        format_dealers_for_reply(info, dealers, include_closing=False)
+                        if dealers else f"Non risultano sedi DFSK in provincia di {info['city']} ({info['provincia']})."
+                        for info, dealers in matches
+                    ]
+                    assistant_reply = "\n\n".join(sections) + (
+                        "\n\nSe vuoi, posso aiutarti a fissare un appuntamento nella sede che preferisci."
+                    )
+                print("[CHAT] dealer_nearby: trovate sedi, reply formattata")
+                if not lead.z_city and locations[0].get("scope") == "city":
+                    lead.z_city = locations[0]["city"]
+            else:
+                provincia = locations[0]["provincia"]
+                if dealer_no_sede_stage == 0:
+                    assistant_reply = (
+                        f"Nella tua provincia {provincia} non abbiamo sedi DFSK registrate, "
+                        "puoi indicarci la provincia più vicina a te?"
+                    )
+                    extra["dealer_no_sede_stage"] = 1
+                else:
+                    assistant_reply = (
+                        f"Al momento non abbiamo sedi DFSK registrate in provincia {provincia}.\n\n"
+                        "Se vuoi possiamo farti ricontattare da un nostro consulente."
+                    )
+                    extra["dealer_no_sede_stage"] = 2
+                extra["dealer_last_provincia"] = provincia
+                print("[CHAT] dealer_nearby: nessuna sede nelle province richieste")
 
      # salviamo lo stato precedente per capire se è appena passato a "completed"
     prev_status = lead.status
