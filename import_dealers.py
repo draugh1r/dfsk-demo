@@ -4,8 +4,8 @@ import argparse
 from typing import Optional
 
 import pandas as pd
-from sqlalchemy import create_engine, Column, Integer, String
-from sqlalchemy.orm import sessionmaker, declarative_base, Session
+from sqlalchemy import create_engine, Column, Integer, String, text
+from sqlalchemy.orm import sessionmaker, declarative_base
 
 
 # =========================
@@ -86,6 +86,7 @@ def import_dealers(xlsx_path: str, truncate: bool = False) -> None:
     # Qui il fix importante: niente NaN automatici tipo "NA"
     df = pd.read_excel(
         xlsx_path,
+        sheet_name=0,         # il primo foglio contiene l'anagrafica corrente
         dtype=str,            # tutto stringa
         keep_default_na=False # non trasformare "NA", "N/A" ecc. in NaN
     )
@@ -105,100 +106,102 @@ def import_dealers(xlsx_path: str, truncate: bool = False) -> None:
     col_rif_vendita = "RIFERIMENTO VENDITA"
     col_rif_servizio = "RIFERIMENTO SERVIZIO"
 
-    # Crea tabelle se non esistono
+    required_columns = {col_azienda, col_provincia, col_sede_legale, col_showroom, col_officina}
+    missing_columns = required_columns - set(df.columns)
+    if missing_columns:
+        raise ValueError(f"Colonne mancanti nel primo foglio: {', '.join(sorted(missing_columns))}")
+
+    dealers = []
+    skipped = 0
+    for idx, row in df.iterrows():
+        # idx parte da 0 ma in Excel la prima riga con dati è di solito la 2
+        row_num = idx + 2
+        if not any(str(value).strip() for value in row):
+            continue
+
+        azienda = safe_get(row, col_azienda)
+        sede_legale = safe_get(row, col_sede_legale)
+        showroom = safe_get(row, col_showroom)
+        officina = safe_get(row, col_officina)
+
+        provincia = safe_get(row, col_provincia).upper()
+        tel_vendita = safe_get(row, col_tel_vendita)
+        tel_officina = safe_get(row, col_tel_officina)
+        referente = safe_get(row, col_referente)
+        rif_vendita = safe_get(row, col_rif_vendita)
+        rif_servizio = safe_get(row, col_rif_servizio)
+
+        # Normalizzazione telefoni (opzionale, togli spazi)
+        tel_vendita = tel_vendita.replace(" ", "") if tel_vendita else ""
+        tel_officina = tel_officina.replace(" ", "") if tel_officina else ""
+
+        # Controlli minimi
+
+        if not azienda:
+            print(
+                f"[IMPORT] Riga {row_num} saltata: nome azienda mancante "
+                f"(sede_legale={sede_legale}, provincia={provincia})"
+            )
+            skipped += 1
+            continue
+
+        if not provincia:
+            print(
+                f"[IMPORT] Riga {row_num} saltata: provincia mancante "
+                f"(azienda={azienda}, sede_legale={sede_legale}, showroom={showroom}, officina={officina})"
+            )
+            skipped += 1
+            continue
+
+        if not (sede_legale or showroom or officina):
+            print(
+                f"[IMPORT] Riga {row_num} saltata: nessun indirizzo presente "
+                f"(azienda={azienda}, provincia={provincia})"
+            )
+            skipped += 1
+            continue
+
+        # City: estrai dal showroom, officina o sede legale
+        city = (
+            extract_city_from_address(showroom)
+            or extract_city_from_address(officina)
+            or extract_city_from_address(sede_legale)
+        )
+
+        # Decidiamo email (se c'è)
+        email = pick_email(referente, rif_vendita, rif_servizio)
+
+        dealer = Dealer(
+            company_name=azienda,
+            address_showroom=showroom or None,
+            address_officina=officina or None,
+            city=city,
+            provincia=provincia,
+            phone_vendita=tel_vendita or None,
+            phone_officina=tel_officina or None,
+            email=email,
+        )
+
+        dealers.append(dealer)
+
+    if truncate and (skipped or not dealers):
+        raise ValueError(
+            f"Sostituzione annullata: {len(dealers)} sedi valide, {skipped} righe scartate."
+        )
+
     Base.metadata.create_all(bind=engine)
-
-    session: Session = SessionLocal()
-
-    try:
+    with SessionLocal.begin() as session:
         if truncate:
-            print("[IMPORT] Pulisco la tabella dealers...")
-            session.query(Dealer).delete()
-            session.commit()
+            if engine.dialect.name == "postgresql":
+                session.execute(text("LOCK TABLE dealers IN SHARE ROW EXCLUSIVE MODE"))
+            removed = session.query(Dealer).delete()
+        session.add_all(dealers)
+        session.flush()
+        total = session.query(Dealer).count()
 
-        inserted = 0
-
-        for idx, row in df.iterrows():
-            # idx parte da 0 ma in Excel la prima riga con dati è di solito la 2
-            row_num = idx + 2
-
-            azienda = safe_get(row, col_azienda)
-            sede_legale = safe_get(row, col_sede_legale)
-            showroom = safe_get(row, col_showroom)
-            officina = safe_get(row, col_officina)
-
-            provincia = safe_get(row, col_provincia).upper()
-            tel_vendita = safe_get(row, col_tel_vendita)
-            tel_officina = safe_get(row, col_tel_officina)
-            referente = safe_get(row, col_referente)
-            rif_vendita = safe_get(row, col_rif_vendita)
-            rif_servizio = safe_get(row, col_rif_servizio)
-
-            # Normalizzazione telefoni (opzionale, togli spazi)
-            tel_vendita = tel_vendita.replace(" ", "") if tel_vendita else ""
-            tel_officina = tel_officina.replace(" ", "") if tel_officina else ""
-
-            # Controlli minimi
-
-            if not azienda:
-                print(
-                    f"[IMPORT] Riga {row_num} saltata: nome azienda mancante "
-                    f"(sede_legale={sede_legale}, provincia={provincia})"
-                )
-                continue
-
-            if not provincia:
-                print(
-                    f"[IMPORT] Riga {row_num} saltata: provincia mancante "
-                    f"(azienda={azienda}, sede_legale={sede_legale}, showroom={showroom}, officina={officina})"
-                )
-                continue
-
-            if not (sede_legale or showroom or officina):
-                print(
-                    f"[IMPORT] Riga {row_num} saltata: nessun indirizzo presente "
-                    f"(azienda={azienda}, provincia={provincia})"
-                )
-                continue
-
-            # City: estrai dal showroom, officina o sede legale
-            city = (
-                extract_city_from_address(showroom)
-                or extract_city_from_address(officina)
-                or extract_city_from_address(sede_legale)
-            )
-
-            # Decidiamo email (se c'è)
-            email = pick_email(referente, rif_vendita, rif_servizio)
-
-            dealer = Dealer(
-                company_name=azienda,
-                address_showroom=showroom or None,
-                address_officina=officina or None,
-                city=city,
-                provincia=provincia,
-                phone_vendita=tel_vendita or None,
-                phone_officina=tel_officina or None,
-                email=email,
-            )
-
-            session.add(dealer)
-            inserted += 1
-
-        session.commit()
-        print(f"[IMPORT] Import completato, righe inserite: {inserted}")
-
-    finally:
-        session.close()
-
-    # Conteggio totale in tabella
-    session2: Session = SessionLocal()
-    try:
-        total = session2.query(Dealer).count()
-    finally:
-        session2.close()
-
-    print(f"[IMPORT] Totale record in dealers: {total}")
+    if truncate:
+        print(f"[IMPORT] Record precedenti rimossi: {removed}")
+    print(f"[IMPORT] Righe inserite: {len(dealers)}, scartate: {skipped}, totale: {total}")
 
 
 # =========================
@@ -216,7 +219,7 @@ def main():
     parser.add_argument(
         "--reset",
         action="store_true",
-        help="Svuota la tabella dealers prima di importare",
+        help="Sostituisce tutte le sedi in un'unica transazione",
     )
 
     args = parser.parse_args()
